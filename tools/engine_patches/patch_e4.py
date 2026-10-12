@@ -45,7 +45,7 @@ def patch(rel, edits):
 
 patch("xrGame/Level_Bullet_Manager.h", [
     ('#include "tracer.h"\n', "after", '#include "portal_mod.h" // portal-mod E4\n'),
-    ("    float fly_dist; //дистанция которую пуля пролетела\n", "after",
+    ("    float fly_dist;", "before",
      "    float portal_dist; // portal-mod E4: metres since the bullet last came out of a portal (clips the tracer)\n"),
     ("    BulletVec m_BulletsRendered; // copy for rendering\n", "after",
      "    portal_mod::Frame m_pf[2]; // portal-mod E4: portals as of this frame, for the worker thread\n"

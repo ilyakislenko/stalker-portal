@@ -76,7 +76,7 @@ function update()
 		if g then
 			db.actor:set_actor_position(g, false)
 		end
-		portal_mod.news("Галерея эффектов для порталов")
+		portal_mod.news("Portal effect gallery")
 		go("single", 1500)
 	elseif st.stage == "single" then
 		stop_all()
@@ -96,7 +96,7 @@ function update()
 		ring(RING_BLUE, vector():set(c):add(vector():set(right):mul(-1.2)), right, up, 1.2, 2.0)
 		ring(RING_ORANGE, vector():set(c):add(vector():set(right):mul(1.2)), right, up, 1.2, 2.0)
 		portal_mod.trace(string.format("GALLERY t=%.1f rings %s / %s", (time_global() - st.armed) / 1000, RING_BLUE, RING_ORANGE))
-		portal_mod.news("Пробные порталы из частиц")
+		portal_mod.news("Trial portals made of particles")
 		go("end", 6000)
 	elseif st.stage == "end" then
 		stop_all()

@@ -97,7 +97,7 @@ function update()
 		end
 		a:move_to_slot(gun, false)
 		a:activate_slot(2)
-		portal_mod.news("Портальная пушка в руках")
+		portal_mod.news("Portal gun in hand")
 		go("scan", 1500)
 	elseif st.stage == "scan" then
 		st.walls = find_walls()
@@ -162,7 +162,7 @@ function update()
 		start.y = ground_at(start)
 		a:set_actor_position(start, false)
 		face(vector():set(B.n):invert())
-		portal_mod.news("Входим в синий портал")
+		portal_mod.news("Walking into the blue portal")
 		st.travels0 = pm_portals.travels
 		st.push_until = time_global() + 4000
 		st.next_diag = 0
@@ -262,7 +262,7 @@ function update()
 			go("floor_aim", 700)
 			return
 		end
-		portal_mod.news(string.format("Синий портал на земле, склон %.0f° — прыжок с 8 метров", g.tilt))
+		portal_mod.news(string.format("Blue portal on the ground, slope %.0f° - jumping from 8 metres", g.tilt))
 		st.floor = B.pos
 		go("drop", 1500)
 	elseif st.stage == "drop" then

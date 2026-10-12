@@ -76,7 +76,7 @@ function drop(h)
 	local top = find_drop_point(h)
 	if not top then
 		portal_mod.trace("drop: no open sky near the actor")
-		portal_mod.news("Нет места для теста: над головой потолок.")
+		portal_mod.news("No room for the test: there is a ceiling overhead.")
 		return false
 	end
 	-- false = ForceTransform. With true (skip collision correction) an actor that was standing still stays
@@ -139,7 +139,7 @@ function update()
 		if b and a:is_on_belt(b) then
 			a:move_to_ruck(b)
 		end
-		portal_mod.news("Тест 1: падение с 12 метров без ботинок")
+		portal_mod.news("Test 1: a 12 metre fall without boots")
 		go("no_boots", 2500)
 	elseif st.stage == "no_boots" then
 		start_fall("no_boots")
@@ -161,15 +161,15 @@ function update()
 		local dmg = st.h0 - a.health
 		results[st.which] = { damage = dmg, speed = pm_boots.last_land_speed }
 		portal_mod.trace(string.format("AUTOTEST %s: damage %.3f, contact speed %.1f", st.which, dmg, pm_boots.last_land_speed))
-		portal_mod.news(string.format("%s: урон %d%% здоровья (скорость удара %.0f м/с)",
-			st.which == "no_boots" and "Без ботинок" or "В ботинках", math.max(0, math.floor(dmg * 100 + 0.5)), pm_boots.last_land_speed))
+		portal_mod.news(string.format("%s: %d%% health damage (impact at %.0f m/s)",
+			st.which == "no_boots" and "Without boots" or "With boots", math.max(0, math.floor(dmg * 100 + 0.5)), pm_boots.last_land_speed))
 		top_up_health()
 		go(st.which == "no_boots" and "give" or "report", 3000)
 	elseif st.stage == "give" then
 		if not a:object(pm_boots.SECTION) then
 			portal_mod.give(pm_boots.SECTION)
 		end
-		portal_mod.news("Тест 2: ботинки длинного падения на поясе")
+		portal_mod.news("Test 2: long fall boots on the belt")
 		st.give_time = time_global()
 		go("equip", 300)
 	elseif st.stage == "equip" then
@@ -203,7 +203,7 @@ function update()
 		portal_mod.trace(string.format("AUTOTEST RESULT %s | no_boots dmg=%s speed=%s | boots dmg=%s speed=%s | cancelled_hits=%d",
 			verdict, tostring(nb.damage), tostring(nb.speed), tostring(wb.damage), tostring(wb.speed), pm_boots.cancelled_hits))
 		if verdict == "PASS" then
-			portal_mod.news("Ботинки длинного падения погасили удар полностью")
+			portal_mod.news("The long fall boots absorbed the impact completely")
 		end
 		go("quit", 5000)  -- let the last message stay on screen for the recording
 	elseif st.stage == "quit" then

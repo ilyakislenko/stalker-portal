@@ -83,10 +83,10 @@ function on_key_press(dik, bind)
 	end
 	if dik == DIK_keys.DIK_F8 then
 		give(pm_portals.GUN)
-		news("Получена портальная пушка. ЛКМ: синий портал, ПКМ: оранжевый, R: закрыть порталы.")
+		news("Portal gun received. LMB: blue portal, RMB: orange, R: close the portals.")
 	elseif dik == DIK_keys.DIK_F6 then
 		give(pm_boots.SECTION)
-		news("Получены ботинки длинного падения. Повесьте их на пояс.")
+		news("Long fall boots received. Put them on your belt.")
 	elseif dik == DIK_keys.DIK_F7 then
 		pm_test.drop(12)
 	end

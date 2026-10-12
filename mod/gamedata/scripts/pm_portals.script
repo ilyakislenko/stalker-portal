@@ -194,7 +194,7 @@ end
 -- Fire portal `i` (1 blue, 2 orange) where the camera looks (or from `from` along `dir`). True if a portal opened.
 function shoot(i, from, dir)
 	if not engine_ok() then
-		portal_mod.news("Портальной пушке нужен движок portal-mod (bin_portal\\xrEngine.exe)")
+		portal_mod.news("The portal gun needs the portal-mod engine (bin_portal\\xrEngine.exe)")
 		return false
 	end
 	local cam = from or device().cam_pos

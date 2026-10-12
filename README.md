@@ -1,50 +1,52 @@
 # S.T.A.L.K.E.R. × Portal 2
 
-Мод для **S.T.A.L.K.E.R.: Тень Чернобыля** на движке [OGSR Engine](https://github.com/OGSR/OGSR-Engine): переносит в Зону
-механику Portal 2.
+A mod for **S.T.A.L.K.E.R.: Shadow of Chernobyl** on [OGSR Engine](https://github.com/OGSR/OGSR-Engine) that brings
+Portal 2's mechanics into the Zone.
 
-- **Ботинки длинного прыжка** (артефакт на пояс): гасят урон от падения.
-- **Портальная пушка** с моделью и звуками Portal 2: синий и оранжевый портал, вид сквозь портал (второй проход
-  рендера), порталы ложатся по углу поверхности.
-- **Через порталы проходит всё**: игрок (с сохранением скорости), пули, ракеты РПГ, гранаты (с «засасыванием» в
-  портал, как в Portal 2), предметы, NPC, мутанты и трупы. В портал на полу проваливается то, что на нём стоит.
+- **Long Fall Boots** (a belt artefact): no fall damage.
+- **Portal Gun** with Portal 2's viewmodel and sounds: blue and orange portals, a live view through them (a second
+  render pass), portals that lie flat on the surface they hit.
+- **Everything goes through portals**: the player (momentum kept), bullets, RPG rockets, grenades (with Portal 2 style
+  funnelling), physics objects, NPCs, mutants and corpses. Whatever stands on a floor portal falls in.
 
-Работа в процессе: полная история решений, факты о движке и грабли описаны в [MODLOG.md](MODLOG.md).
+Work in progress. The full log of decisions, engine facts and pitfalls is in [MODLOG.md](MODLOG.md).
 
-## Что нужно
+## Requirements
 
-- S.T.A.L.K.E.R.: Тень Чернобыля (GOG) на OGSR Engine 3.518.
-- Исходники OGSR Engine (тег 3.519) и Visual Studio 2022 (C++), Python 3.11.
-- **Установленный Portal 2**: его текстуры, звуки и модель пушки конвертируются скриптами локально, со своей копии
-  игры. В репозитории нет ни ассетов Portal 2, ни файлов из архивов STALKER.
+- S.T.A.L.K.E.R.: Shadow of Chernobyl (GOG) running on OGSR Engine 3.518.
+- OGSR Engine sources (tag 3.519), Visual Studio 2022 with C++, Python 3.11.
+- **Portal 2 installed**: its textures, sounds and portal gun model are converted by the scripts from your own copy
+  of the game. This repository contains no Portal 2 assets and no files from the S.T.A.L.K.E.R. archives.
 
-Пути в скриптах пока зашиты под машину автора (`E:\Games\...`, `E:\github\OGSR-Engine`, `E:\SteamLibrary\...`):
-поправь их в начале `tools/*.py` и `tools/build_ogsr.cmd`.
+The scripts still have the author's paths hardcoded (`E:\Games\...`, `E:\github\OGSR-Engine`, `E:\SteamLibrary\...`):
+change them at the top of `tools/*.py` and in `tools/build_ogsr.cmd`.
 
-## Сборка
+## Building
 
-1. Движок: в чекауте OGSR Engine по очереди применить `tools/engine_patches/patch_e1.py` … `patch_e9.py`
-   (`python -I tools/engine_patches/patch_eN.py`), собрать `tools\build_ogsr.cmd` и положить `bin_x64\xrEngine.exe`
-   в папку игры как `bin_portal\xrEngine.exe` (родной `bin_x64` не трогается). Для MSVC 17.14 движку нужны ещё две
-   правки сборки: dependent `static_assert` и quad index buffer без `consteval`.
-2. Ассеты Portal 2: `tools/p2_assets.py` (текстуры, звуки), `tools/p2_gun_ogf.py` (модель пушки в OGF),
-   `tools/make_icons.py` (иконки инвентаря). Всё пишется в `_gen/` (в git не попадает).
-3. Установка в игру: `python -I tools/deploy.py` (делает бэкап, ставит `mod/gamedata` + `_gen/gamedata`, добавляет хуки
-   в `bind_stalker.script`). Удаление: `--uninstall`.
+1. Engine: in an OGSR Engine checkout apply `tools/engine_patches/patch_e1.py` … `patch_e9.py` in order
+   (`python -I tools/engine_patches/patch_eN.py`), build with `tools\build_ogsr.cmd` and copy `bin_x64\xrEngine.exe`
+   into the game folder as `bin_portal\xrEngine.exe` (the stock `bin_x64` stays untouched). MSVC 17.14 also needs two
+   build fixes in the engine: a dependent `static_assert` and the quad index buffer built at runtime instead of
+   `consteval`.
+2. Portal 2 assets: `tools/p2_assets.py` (textures, sounds), `tools/p2_gun_ogf.py` (the gun model as OGF),
+   `tools/make_icons.py` (inventory icons). Output goes to `_gen/` (not in git).
+3. Install into the game: `python -I tools/deploy.py` (backs up, installs `mod/gamedata` + `_gen/gamedata`, adds hooks
+   to `bind_stalker.script`). Remove with `--uninstall`.
 
-Запуск: `bin_portal\xrEngine.exe`.
+Run `bin_portal\xrEngine.exe`.
 
-## Управление
+## Controls
 
-| Клавиша | Действие |
+| Key | Action |
 |---|---|
-| F8 | выдать портальную пушку (режим разработчика) |
-| F6 | выдать ботинки длинного прыжка |
-| ЛКМ / ПКМ | синий / оранжевый портал |
-| R | закрыть порталы |
+| F8 | give the portal gun (dev mode) |
+| F6 | give the long fall boots |
+| LMB / RMB | blue / orange portal |
+| R | close the portals |
 
-## Тесты
+## Tests
 
-`tools/lab.py` запускает игру на отдельном лабораторном профиле с автотестом и пишет видео
-(`python -I tools/deploy.py --autotest bar` → `python -I tools/lab.py --engine bin_portal --save bar --record take`).
-Сценарии: `boots`, `portals`, `gun`, `bar` (стрельба через порталы), `npc` (NPC и трупы через портал в полу).
+`tools/lab.py` runs the game on a separate lab profile with an autotest scenario and records a video
+(`python -I tools/deploy.py --autotest bar`, then `python -I tools/lab.py --engine bin_portal --save bar --record take`).
+Scenarios: `boots`, `portals`, `gun`, `bar` (shooting through portals), `npc` (NPCs and corpses through a floor
+portal).

@@ -167,7 +167,7 @@ function update()
 	elseif st.stage == "look" then
 		local O = pm_portals.portals[2]
 		H.look_at(H.v3(O.pos.x, O.pos.y - 0.8, O.pos.z))
-		portal_mod.news("Бандиты перед оранжевым порталом")
+		portal_mod.news("Bandits in front of the orange portal")
 		go("aim", 2500)
 
 	-- 1 and 2: blue portal under their feet
@@ -179,7 +179,7 @@ function update()
 		if not portal_under(st.k) then
 			return go("aim", 0)
 		end
-		portal_mod.news("Портал под ноги")
+		portal_mod.news("A portal under their feet")
 		go("shoot_blue", 900)
 	elseif st.stage == "shoot_blue" then
 		local ok = pm_portals.shoot(1)
@@ -203,7 +203,7 @@ function update()
 		if o then
 			H.look_at(o:bone_position("bip01_spine2"))
 		end
-		portal_mod.news("А теперь труп")
+		portal_mod.news("And now a corpse")
 		go("fire_ak", 2500)
 	elseif st.stage == "fire_ak" then
 		local o = obj(3)

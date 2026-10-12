@@ -61,14 +61,14 @@ function update()
 		-- 1. identity: orange on the same spot, back to back with blue -> blue must look perfectly transparent
 		place_standing(1, a.x + fwd.x * 5, a.z + fwd.z * 5, a.y, back)
 		place_standing(2, a.x + fwd.x * 5, a.z + fwd.z * 5, a.y, fwd)
-		portal_mod.news("Тест 1: оранжевый спиной к синему — синий должен стать прозрачным")
+		portal_mod.news("Test 1: orange back to back with blue - blue should turn see-through")
 		portal_mod.trace("PORTALTEST identity pair placed")
 		go("side", 4000)
 	elseif st.stage == "side" then
 		-- 2. orange 12 m to the right, facing back towards the actor's line: blue shows a side view of where we stand
 		local a = st.origin
 		place_standing(2, a.x + st.right.x * 15 + st.fwd.x * 5, a.z + st.right.z * 15 + st.fwd.z * 5, a.y, vector():set(st.right):invert())
-		portal_mod.news("Тест 2: оранжевый в 12 м справа — в синем вид сбоку")
+		portal_mod.news("Test 2: orange 12 m to the right - a side view in blue")
 		portal_mod.trace("PORTALTEST orange moved 12 m right, facing left")
 		go("left", 4000)
 	elseif st.stage == "left" then
@@ -84,7 +84,7 @@ function update()
 	elseif st.stage == "turn" then
 		db.actor:set_actor_position(st.origin, false)
 		db.actor:set_actor_direction(-vector():set(st.fwd):invert():getH())
-		portal_mod.news("Разворот: за спиной оранжевый портал")
+		portal_mod.news("Turning around: the orange portal is behind")
 		portal_mod.trace("PORTALTEST turned around")
 		go("end", 3000)
 	elseif st.stage == "end" then
