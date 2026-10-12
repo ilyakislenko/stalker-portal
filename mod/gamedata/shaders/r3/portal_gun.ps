@@ -1,0 +1,58 @@
+// portal-mod: Portal 2 portal look. The oval, a wobbling bright rim from Portal 2's colour ramps
+// (portal-blue-color / portal-orange-color) animated by two layers of its noise-blur texture, and inside either
+// the swirling fill of an unlinked portal or (once the second-camera pass exists) the view through the other one.
+#include "common.h"
+
+struct v2p_portal
+{
+    float2 uv : TEXCOORD0;
+    float3 wpos : TEXCOORD1;
+    float4 hpos : SV_POSITION;
+};
+
+uniform float4 portal_params; // x: 0 blue / 1 orange, y: linked, z: open 0..1, w: 1 = s_view holds this portal's view
+
+Texture2D s_noise;
+Texture2D s_ramp_blue;
+Texture2D s_ramp_orange;
+Texture2D s_view; // $user$portal0: the world seen through this portal, same screen layout as the frame
+
+float3 portal_ramp(float u)
+{
+    float2 tc = float2(saturate(u), 0.5);
+    return portal_params.x < 0.5 ? s_ramp_blue.Sample(smp_rtlinear, tc).rgb : s_ramp_orange.Sample(smp_rtlinear, tc).rgb;
+}
+
+float4 main(v2p_portal I) : SV_Target
+{
+    float open = max(portal_params.z, 0.001);
+    float2 uv = I.uv / open; // opening: the oval grows from its centre
+    float r = length(uv);
+    float t = timers.x;
+
+    float n1 = s_noise.Sample(smp_linear, uv * 0.35 + float2(t * 0.031, t * 0.017)).r;
+    float n2 = s_noise.Sample(smp_linear, uv * 0.90 - float2(t * 0.023, -t * 0.041)).r;
+    float n3 = s_noise.Sample(smp_linear, float2(atan2(uv.y, uv.x) * 0.3183, r * 0.5 - t * 0.15)).r; // swirl
+
+    float edge = r + (n1 - 0.5) * 0.06; // wobbling outline
+    clip(1.04 - edge);
+
+    // bright band along the rim, soft falloff just outside it
+    float band = smoothstep(0.80, 0.97, edge) * (1.0 - smoothstep(0.985, 1.04, edge));
+    float3 rim = portal_ramp(0.55 + 0.45 * band + 0.25 * (n2 - 0.5)) * (1.0 + 2.5 * band);
+
+    // unlinked portal: dark swirl in the portal's colour
+    float swirl = saturate(0.35 + 0.65 * n3 * n2);
+    float3 inside = portal_ramp(0.15 + 0.45 * swirl * smoothstep(0.0, 0.9, r));
+
+    // linked and rendered this frame: the other side, with a faint tint of the portal colour towards the rim
+    if (portal_params.y > 0.5 && portal_params.w > 0.5)
+    {
+        float3 view = s_view.Sample(smp_rtlinear, I.hpos.xy * screen_res.zw).rgb;
+        inside = lerp(view, portal_ramp(0.7), smoothstep(0.75, 0.97, edge) * 0.35);
+    }
+
+    float3 col = lerp(inside, rim, saturate(band * 1.4));
+    float alpha = edge < 0.985 ? 1.0 : saturate((1.04 - edge) / 0.055);
+    return float4(col, alpha);
+}

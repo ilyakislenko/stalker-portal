@@ -1,0 +1,543 @@
+-- Lab scenario "bar": shooting through portals. The orange portal goes on a far wall with open ground in front, where
+-- bandits are spawned; the player stands 7 m in front of the blue portal and sees them through it. An AK burst, an RPG
+-- rocket and an F1 grenade go into the blue portal and come out of the orange one. Aim is computed through the portal
+-- (the "virtual eye" behind the orange portal), the grenade with a ballistic arc. Recorded at the Bar (save "bar").
+-- Needs the portal-mod engine (E4: bullets and physics bodies through portals). Logs "BARTEST" lines.
+
+local st = nil
+local DOWN = vector():set(0, -1, 0)
+local G = 19.62    -- physics gravity (OGSR default_world_gravity = 2 * 9.81)
+local STAND = 4.5  -- metres between the player and the blue portal
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+function v3(x, y, z)
+	return vector():set(x, y, z)
+end
+
+function along(p, dir, k)
+	return vector():set(p):add(vector():set(dir):mul(k))
+end
+
+function ground_at(p)
+	local top = v3(p.x, p.y + 30, p.z)
+	local rq = level.ray_query(top, DOWN, 80, rq_target.rqtStatic, db.actor)
+	return rq.result and (top.y - rq.range) or p.y
+end
+
+function look_dir(dir)
+	local cam = actor_camera(0)
+	cam.yaw = -dir:getH()
+	cam.pitch = -dir:getP()
+end
+
+function look_at(p)
+	look_dir(vector():sub(p, device().cam_pos):normalize())
+end
+
+local function report(verdict)
+	portal_mod.trace("AUTOTEST RESULT " .. verdict)
+	go("done")
+	portal_mod.finish_autotest()
+end
+
+-- Is there `len` metres of flat, open ground in front of a wall point (hit, n)?
+function open_in_front(hit, n, len)
+	local nh = v3(n.x, 0, n.z):normalize()
+	local g0 = ground_at(along(hit, nh, 0.7))
+	for k = 2, len, 2 do
+		if math.abs(ground_at(along(hit, nh, k)) - g0) > 1.2 then
+			return false
+		end
+	end
+	local from = along(hit, nh, 0.4)
+	from.y = g0 + 1.2
+	local rq = level.ray_query(from, nh, len, rq_target.rqtStatic, db.actor)
+	return not (rq.result and rq.range < len), g0
+end
+
+-- Walls seen from here: {dir, dist, hit, n, ground, open = metres of open ground in front (0, 8 or 11)}
+function find_walls()
+	local eye = device().cam_pos
+	local walls = {}
+	for k = 0, 71 do
+		local a = k * math.pi / 36
+		local dir = v3(math.sin(a), 0, math.cos(a))
+		local rq = level.ray_query(eye, dir, 60, rq_target.rqtStatic, db.actor)
+		if rq.result and rq.range > 4 then
+			local n = level.ray_query_normal(eye, dir, 60)
+			if math.abs(n.y) < 0.3 and n:dotproduct(dir) < -0.6 then
+				local hit = along(eye, dir, rq.range)
+				local ok8, g0 = open_in_front(hit, n, 8)
+				local h = hit.y - (g0 or hit.y)
+				if ok8 and h > 0.8 and h < 2.6 then
+					local w = { dir = dir, dist = rq.range, hit = hit, n = n, ground = g0, open = 8 }
+					if open_in_front(hit, n, 11) then
+						w.open = 11
+					end
+					table.insert(walls, w)
+				end
+			end
+		end
+	end
+	return walls
+end
+
+function map_point(A, B, p)
+	return vector():set(B.pos):add(pm_portals.map_dir(A, B, vector():sub(p, A.pos)))
+end
+
+-- The point where a path crosses portal P's plane from behind (local x, y in half sizes), or nil.
+local function oval_xy(P, a, b)
+	local da, db_ = vector():sub(a, P.pos):dotproduct(P.n), vector():sub(b, P.pos):dotproduct(P.n)
+	if not (da < 0 and db_ >= 0) then
+		return nil
+	end
+	local q = vector():set(a):add(vector():sub(b, a):mul(-da / (db_ - da))):sub(P.pos)
+	return q:dotproduct(P.right) / (pm_portals.W / 2), q:dotproduct(P.up) / (pm_portals.H / 2)
+end
+
+-- Straight shot from the camera through blue (B) at T beyond orange (O): the real direction, or nil if T can't be
+-- seen through the oval. The camera seen through the portals sits behind O (the "virtual eye").
+local function aim_through(T)
+	local B, O = pm_portals.portals[1], pm_portals.portals[2]
+	local E = map_point(B, O, device().cam_pos)
+	local x, y = oval_xy(O, E, T)
+	if not x or x * x + y * y > 0.45 then
+		return nil
+	end
+	return pm_portals.map_dir(O, B, vector():sub(T, E):normalize())
+end
+
+-- Where an arc from S (velocity dir * v, gravity G) crosses portal P's plane from behind: squared distance from the
+-- oval's middle in half sizes, or nil.
+local function arc_r2(S, dir, v, P)
+	local p, vel, dt = vector():set(S), vector():set(dir):mul(v), 0.005
+	for _ = 1, 600 do
+		local q = along(p, vel, dt)
+		local x, y = oval_xy(P, p, q)
+		if x then
+			return x * x + y * y
+		end
+		p = q
+		vel.y = vel.y - G * dt
+	end
+end
+
+-- Grenade: a charged throw (right button; F1 speed grows from force_min 10 m/s by 15 m/s per second while held ready)
+-- from the camera into the blue portal that lands at T beyond the orange one. Of all speeds the slowest arc that
+-- crosses the oval near its middle wins: it comes down softly next to the target instead of skidding past it.
+-- Returns {dir (real), v, r2} or nil.
+local function lob_plan(T)
+	local B, O = pm_portals.portals[1], pm_portals.portals[2]
+	local S = map_point(B, O, device().cam_pos)
+	local dx, dz, h = T.x - S.x, T.z - S.z, T.y - S.y
+	local d = math.sqrt(dx * dx + dz * dz)
+	if d < 0.5 then
+		return nil
+	end
+	local best
+	for v = 10, 30, 0.25 do
+		local v2 = v * v
+		local disc = v2 * v2 - G * (G * d * d + 2 * h * v2)
+		if disc >= 0 then
+			for _, sgn in ipairs({ -1, 1 }) do
+				local th = math.atan((v2 + sgn * math.sqrt(disc)) / (G * d))
+				local flight = d / (v * math.cos(th))
+				local dir = v3(dx / d * math.cos(th), math.sin(th), dz / d * math.cos(th))
+				local r2 = flight < 1.6 and arc_r2(S, dir, v, O)
+				if r2 and r2 < 0.3 and (not best or r2 < best.r2 - 0.05) then
+					best = { dir = pm_portals.map_dir(O, B, dir), v = v, r2 = r2 }
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function hold(bind, ms)
+	st.key = bind_to_dik(bind)
+	level.send_event_key_press(st.key)
+	st.hold_until = time_global() + ms
+end
+
+local function holding()
+	if st.key then
+		if time_global() < st.hold_until then
+			level.send_event_key_hold(st.key)
+			return true
+		end
+		level.send_event_key_release(st.key)
+		st.key = nil
+	end
+	return false
+end
+
+local function to_slot(section, slot)
+	local a = db.actor
+	local item = a:object(section)
+	if not item then
+		return false
+	end
+	local held = a:item_in_slot(slot)
+	if held and held:id() ~= item:id() then
+		a:move_to_ruck(held)
+	end
+	a:move_to_slot(item, false)
+	a:activate_slot(slot)
+	return true
+end
+
+local function bandit(id)
+	local o = level.object_by_id(id)
+	return o and o:alive() and o or nil
+end
+
+local function alive_bandits()
+	local n = 0
+	for _, id in ipairs(st.bandits) do
+		local o = level.object_by_id(id)
+		if not o or o:alive() then -- not online yet counts as alive
+			n = n + 1
+		end
+	end
+	return n
+end
+
+local function spawn_bandits(count)
+	local a = db.actor
+	local O = pm_portals.portals[2]
+	local out = v3(st.out.x, 0, st.out.z):normalize()
+	local side = v3(O.right.x, 0, O.right.z):normalize()
+	local spots = { { 4, -0.4 }, { 6, 0.5 }, { 8, -0.1 } }
+	for k = 1, count do
+		local p = along(along(O.pos, out, spots[k][1]), side, spots[k][2])
+		p.y = ground_at(p)
+		local lv = level.vertex_id(p)
+		if lv and lv < 4294967295 then
+			local se = alife():create("esc_bandit_respawn_1", p, lv, a:game_vertex_id())
+			table.insert(st.bandits, se.id)
+		end
+	end
+end
+
+-- Bandits online get script control with nothing to do: they stand where they were put (a shooting range). They
+-- become loners so the Duty patrol at the Bar does not shoot them first.
+local function hold_bandits()
+	for _, id in ipairs(st.bandits) do
+		if not st.held[id] then
+			local o = level.object_by_id(id)
+			if o and o:alive() then
+				st.held[id] = true
+				local ok, err = pcall(function()
+					o:set_character_community("stalker", 0, 0)
+					o:script(true, "pm_bar_test")
+				end)
+				if not ok then
+					portal_mod.trace("BARTEST script control failed: " .. tostring(err))
+				end
+			end
+		end
+	end
+end
+
+local function vs(v)
+	return string.format("(%.1f, %.1f, %.1f)", v.x, v.y, v.z)
+end
+
+local function dump(tag)
+	local B, O = pm_portals.portals[1], pm_portals.portals[2]
+	local E = map_point(B, O, device().cam_pos)
+	portal_mod.trace(string.format("BARTEST %s: cam %s dir %s; blue %s n %s; orange %s n %s; virtual eye %s; out %s", tag,
+		vs(device().cam_pos), vs(device().cam_dir), vs(B.pos), vs(B.n), vs(O.pos), vs(O.n), vs(E), vs(st.out)))
+	for k, id in ipairs(st.bandits) do
+		local o = level.object_by_id(id)
+		if o then
+			local T = o:bone_position("bip01_spine2")
+			local x, y = oval_xy(O, E, T)
+			portal_mod.trace(string.format("  bandit %d %s pos %s chest %s oval %s", k, o:alive() and "alive" or "dead",
+				vs(o:position()), vs(T), x and string.format("%.2f, %.2f", x, y) or "-"))
+		else
+			portal_mod.trace(string.format("  bandit %d offline", k))
+		end
+	end
+end
+
+-- Mutants around would chew on the player in the middle of the take (red claw marks over the picture): gone.
+function clear_monsters()
+	local n = 0
+	level.iterate_nearest(db.actor:position(), 150, function(o)
+		if IsMonster(o) and o:alive() then
+			local se = alife():object(o:id())
+			if se then
+				alife():release(se, true)
+				n = n + 1
+			end
+		end
+		return false
+	end)
+	if n > 0 then
+		portal_mod.trace(string.format("BARTEST released %d mutant(s) nearby", n))
+	end
+end
+
+-- Who killed whom: a bandit seen dead for the first time is put down to the weapon in use (st.phase).
+local function tally()
+	for _, id in ipairs(st.bandits) do
+		local o = level.object_by_id(id)
+		if o and not o:alive() and not st.dead[id] then
+			st.dead[id] = st.phase or "other"
+			st.kills[st.dead[id]] = (st.kills[st.dead[id]] or 0) + 1
+			portal_mod.trace(string.format("BARTEST bandit %d killed (%s)", id, st.dead[id]))
+		end
+	end
+end
+
+-- The bandit to shoot: the first one alive that can be seen through the portals; its chest.
+local function target()
+	for _, id in ipairs(st.bandits) do
+		local o = bandit(id)
+		if o then
+			local T = o:bone_position("bip01_spine2")
+			local dir = aim_through(T)
+			if dir then
+				return o, T, dir
+			end
+		end
+	end
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	if not st then
+		st = { bandits = {}, kills = {}, held = {}, dead = {} }
+		go("setup", 4000)
+		portal_mod.trace("AUTOTEST armed (bar) level=" .. level.name())
+		return
+	end
+	hold_bandits()
+	tally()
+	if st.track then
+		st.track()
+	end
+	if holding() or time_global() < st.t then
+		return
+	end
+
+	if st.stage == "setup" then
+		clear_monsters()
+		get_console():execute("g_god on")            -- lab only: nobody ends the take early
+		get_console():execute("g_unlimitedammo on")
+		for _, s in ipairs({ pm_portals.GUN, "wpn_ak74", "wpn_rpg7", "grenade_f1", "grenade_f1" }) do
+			portal_mod.give(s)
+		end
+		for _ = 1, 4 do
+			portal_mod.give("ammo_5.45x39_fmj")
+		end
+		for _ = 1, 3 do
+			portal_mod.give("ammo_og-7b")
+		end
+		go("arm_gun", 1500)
+	elseif st.stage == "arm_gun" then
+		to_slot(pm_portals.GUN, 2)
+		go("scan", 1800)
+	elseif st.stage == "scan" then
+		local walls = find_walls()
+		-- orange: the farthest wall with 11 m of open ground (the bandits' side); blue: the nearest other wall
+		-- with 8 m (the player's side), far from the orange one
+		table.sort(walls, function(x, y) return x.dist > y.dist end)
+		for _, w in ipairs(walls) do
+			if w.open >= 11 then
+				st.orange = w
+				break
+			end
+		end
+		if st.orange then
+			local zone = along(st.orange.hit, st.orange.n, 8) -- where the bandits will stand
+			for k = #walls, 1, -1 do
+				local w = walls[k]
+				if w ~= st.orange and w.hit:distance_to(st.orange.hit) > 14 and w.n:dotproduct(st.orange.n) < 0.8
+					and along(w.hit, w.n, STAND):distance_to(zone) > 12 then
+					st.blue = w
+					break
+				end
+			end
+		end
+		local e = device().cam_pos
+		portal_mod.trace(string.format("BARTEST %d walls at (%.1f, %.1f, %.1f); orange %s, blue %s", #walls, e.x, e.y, e.z,
+			st.orange and string.format("%.1f m", st.orange.dist) or "none",
+			st.blue and string.format("%.1f m", st.blue.dist) or "none"))
+		if not (st.blue and st.orange) then
+			-- look around from another walkable spot nearby
+			st.hops = (st.hops or 0) + 1
+			st.home = st.home or a:position()
+			if st.hops > 10 then
+				return report("ERROR no two usable walls here")
+			end
+			st.orange, st.blue = nil, nil
+			local p = v3(st.home.x + math.random(-35, 35), st.home.y, st.home.z + math.random(-35, 35))
+			local lv = level.vertex_id(p)
+			if lv and lv < 4294967295 then
+				a:set_actor_position(level.vertex_position(lv), false)
+			end
+			return go("scan", 900)
+		end
+		look_at(st.orange.hit)
+		go("shoot_orange", 900)
+	elseif st.stage == "shoot_orange" then
+		st.ok_o = pm_portals.shoot(2)
+		go("walk_to_blue", 1500)
+	elseif st.stage == "walk_to_blue" then
+		local w = st.blue
+		local nh = v3(w.n.x, 0, w.n.z):normalize()
+		local p = along(w.hit, nh, STAND)
+		p.y = ground_at(p)
+		a:set_actor_position(p, false)
+		go("aim_blue", 900)
+	elseif st.stage == "aim_blue" then
+		local w = st.blue
+		look_at(v3(w.hit.x, w.ground + 1.5, w.hit.z))
+		go("shoot_blue", 700)
+	elseif st.stage == "shoot_blue" then
+		st.ok_b = pm_portals.shoot(1)
+		portal_mod.trace(string.format("BARTEST portals: blue %s, orange %s", tostring(st.ok_b), tostring(st.ok_o)))
+		if not (st.ok_b and st.ok_o) then
+			return report("ERROR a portal did not open")
+		end
+		local B, O = pm_portals.portals[1], pm_portals.portals[2]
+		st.out = pm_portals.map_dir(B, O, vector():sub(B.pos, device().cam_pos):normalize())
+		go("bandits", 1200)
+	elseif st.stage == "bandits" then
+		clear_monsters()
+		spawn_bandits(3)
+		look_at(pm_portals.portals[1].pos)
+		portal_mod.news("Бандиты за оранжевым порталом")
+		go("arm_ak", 1500)
+	elseif st.stage == "arm_ak" then
+		to_slot("wpn_ak74", 2)
+		go("fire_ak", 2500)
+	elseif st.stage == "fire_ak" then
+		local o, T, dir = target()
+		dump("before AK")
+		portal_mod.trace(string.format("BARTEST AK: %d alive, target %s", alive_bandits(), o and "in sight" or "none"))
+		portal_mod.news("АК в синий портал")
+		st.alive0 = alive_bandits()
+		st.phase = "ak"
+		look_dir(dir or vector():sub(pm_portals.portals[1].pos, device().cam_pos):normalize())
+		-- the burst follows the bandits through the portal; it stops with one left for the RPG
+		st.track = function()
+			if st.key and alive_bandits() <= 1 then
+				st.hold_until = 0
+			end
+			local _, _, d = target()
+			if d then
+				look_dir(d)
+			end
+		end
+		hold(key_bindings.kWPN_FIRE, 6000)
+		go("after_ak", 800)
+	elseif st.stage == "after_ak" then
+		st.track = nil
+		portal_mod.trace(string.format("BARTEST AK: bandits alive %d -> %d", st.alive0, alive_bandits()))
+		to_slot("wpn_rpg7", 2)
+		go("fire_rpg", 2500)
+	elseif st.stage == "fire_rpg" then
+		local o, T, dir = target()
+		if not o and (st.rpg_tries or 0) < 2 then -- none in sight: one more
+			st.rpg_tries = (st.rpg_tries or 0) + 1
+			spawn_bandits(1)
+			return go("fire_rpg", 2500)
+		end
+		dir = dir or vector():sub(pm_portals.portals[1].pos, device().cam_pos):normalize()
+		dump("before RPG")
+		portal_mod.news("РПГ в синий портал")
+		st.alive1 = alive_bandits()
+		st.phase = "rpg"
+		look_dir(dir)
+		st.track = function()
+			local _, _, d = target()
+			if d then
+				look_dir(d)
+			end
+		end
+		hold(key_bindings.kWPN_FIRE, 150)
+		go("after_rpg", 3500)
+	elseif st.stage == "after_rpg" then
+		st.track = nil
+		portal_mod.trace(string.format("BARTEST RPG: bandits alive %d -> %d", st.alive1, alive_bandits()))
+		if alive_bandits() == 0 then
+			spawn_bandits(2)
+		end
+		to_slot("grenade_f1", 3)
+		go("throw", 2500)
+	elseif st.stage == "throw" then
+		-- land half a metre in front of a bandit's feet
+		local plan
+		for _, id in ipairs(st.bandits) do
+			local o = bandit(id)
+			if o then
+				local T = along(o:position(), st.out, -0.5)
+				T.y = o:position().y + 0.15
+				local pl = lob_plan(T)
+				if pl and (not plan or pl.r2 < plan.r2) then
+					plan = pl
+				end
+			end
+		end
+		local dir = plan and plan.dir
+		if not dir and not st.grenade_spawned then
+			st.grenade_spawned = true
+			spawn_bandits(2)
+			portal_mod.trace("BARTEST grenade: no arc to a bandit, two more")
+			return go("throw", 2000)
+		end
+		portal_mod.trace("BARTEST grenade: arc through the portal " ..
+			(plan and string.format("at %.2f m/s (oval r2 %.2f)", plan.v, plan.r2) or "not found"))
+		dir = dir or vector():sub(pm_portals.portals[1].pos, device().cam_pos):normalize()
+		portal_mod.news("Граната в синий портал")
+		st.alive2 = alive_bandits()
+		st.phase = "grenade"
+		look_dir(dir)
+		st.track = function()
+			look_dir(dir) -- the grenade leaves the hand after the throw animation; keep the aim until then
+		end
+		if not plan then
+			hold(key_bindings.kWPN_FIRE, 150) -- quick throw (25 m/s) straight at the portal
+			return go("grenade_flies", 1800)
+		end
+		-- charged throw: right button down, let go (v - 10) / 15 s after the grenade is ready (state eReady = 15)
+		st.zoom = bind_to_dik(key_bindings.kWPN_ZOOM)
+		st.charge_ms = math.max(0, (plan.v - 10) / 15 * 1000)
+		st.charge_deadline = time_global() + 4000
+		st.ready_at = nil
+		level.send_event_key_press(st.zoom)
+		go("charge")
+	elseif st.stage == "charge" then
+		local item = a:active_item()
+		if item and item:get_hud_item_state() == 15 then
+			st.ready_at = st.ready_at or time_global()
+		end
+		if (st.ready_at and time_global() - st.ready_at >= st.charge_ms) or time_global() > st.charge_deadline then
+			level.send_event_key_release(st.zoom)
+			portal_mod.trace(string.format("BARTEST grenade: let go after %s ms ready",
+				st.ready_at and tostring(time_global() - st.ready_at) or "never"))
+			go("grenade_flies", 1800)
+		end
+	elseif st.stage == "grenade_flies" then
+		st.track = nil
+		look_at(pm_portals.portals[1].pos)
+		go("after_grenade", 4500)
+	elseif st.stage == "after_grenade" then
+		portal_mod.trace(string.format("BARTEST grenade: bandits alive %d -> %d", st.alive2, alive_bandits()))
+		local k = st.kills
+		local all = (k.ak or 0) > 0 and (k.rpg or 0) > 0 and (k.grenade or 0) > 0
+		report(string.format("%s | kills through the portal: AK %d, RPG %d, grenade %d", all and "PASS" or "PARTIAL",
+			k.ak or 0, k.rpg or 0, k.grenade or 0))
+	end
+end

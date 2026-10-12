@@ -1,0 +1,241 @@
+-- Lab scenario "npc": NPCs and a corpse fall through a floor portal. The orange portal goes on a wall with open ground
+-- in front; three bandits stand there (script control, loners). The blue portal is shot under the first one's feet,
+-- then the second's: each falls in and comes out of the orange portal. The third is shot dead with an AK and a blue
+-- portal opened under the corpse. Recorded at the Bar (save "bar"). Needs the portal-mod engine with E8.
+-- Logs "NPCTEST" lines; helpers come from pm_bar_test.
+
+local st = nil
+local H = pm_bar_test
+local STAND = 11   -- metres between the orange wall and the player
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+local function report(verdict)
+	portal_mod.trace("AUTOTEST RESULT " .. verdict)
+	go("done")
+	portal_mod.finish_autotest()
+end
+
+local function hold(bind, ms)
+	st.key = bind_to_dik(bind)
+	level.send_event_key_press(st.key)
+	st.hold_until = time_global() + ms
+end
+
+local function holding()
+	if st.key then
+		if time_global() < st.hold_until then
+			level.send_event_key_hold(st.key)
+			return true
+		end
+		level.send_event_key_release(st.key)
+		st.key = nil
+	end
+	return false
+end
+
+local function to_slot(section, slot)
+	local a = db.actor
+	local item = a:object(section)
+	if not item then
+		return false
+	end
+	local held = a:item_in_slot(slot)
+	if held and held:id() ~= item:id() then
+		a:move_to_ruck(held)
+	end
+	a:move_to_slot(item, false)
+	a:activate_slot(slot)
+	return true
+end
+
+local function obj(k)
+	return st.ids[k] and level.object_by_id(st.ids[k])
+end
+
+-- Bandits stand still (script control, nothing to do) and are loners, so the Duty patrol leaves them alone.
+local function hold_bandits()
+	for k, id in ipairs(st.ids) do
+		if not st.held[id] then
+			local o = level.object_by_id(id)
+			if o and o:alive() then
+				st.held[id] = true
+				local ok, err = pcall(function()
+					o:set_character_community("stalker", 0, 0)
+					o:script(true, "pm_npc_test")
+				end)
+				if not ok then
+					portal_mod.trace("NPCTEST script control failed: " .. tostring(err))
+				end
+			end
+		end
+	end
+end
+
+local function near_orange(o)
+	local O = pm_portals.portals[2]
+	return o and o:position():distance_to(O.pos) < 5
+end
+
+local function vs(v)
+	return string.format("(%.1f, %.1f, %.1f)", v.x, v.y, v.z)
+end
+
+-- shoot the blue portal at the feet of bandit k (or where its corpse lies)
+local function portal_under(k)
+	local o = obj(k)
+	if not o then
+		return false
+	end
+	local p = o:position()
+	H.look_at(H.v3(p.x, p.y + 0.05, p.z))
+	st.before = vector():set(p)
+	return true
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	if not st then
+		st = { ids = {}, held = {}, results = {} }
+		go("setup", 4000)
+		portal_mod.trace("AUTOTEST armed (npc) level=" .. level.name())
+		return
+	end
+	hold_bandits()
+	if holding() or time_global() < st.t then
+		return
+	end
+
+	if st.stage == "setup" then
+		H.clear_monsters()
+		get_console():execute("g_god on") -- lab only
+		get_console():execute("g_unlimitedammo on")
+		portal_mod.give(pm_portals.GUN)
+		portal_mod.give("wpn_ak74")
+		for _ = 1, 2 do
+			portal_mod.give("ammo_5.45x39_fmj")
+		end
+		go("arm_gun", 1500)
+	elseif st.stage == "arm_gun" then
+		to_slot(pm_portals.GUN, 2)
+		go("scan", 1800)
+	elseif st.stage == "scan" then
+		local walls = H.find_walls()
+		table.sort(walls, function(x, y) return x.dist > y.dist end)
+		for _, w in ipairs(walls) do
+			if w.open >= 11 then
+				st.orange = w
+				break
+			end
+		end
+		portal_mod.trace(string.format("NPCTEST %d walls; orange %s", #walls,
+			st.orange and string.format("%.1f m", st.orange.dist) or "none"))
+		if not st.orange then
+			return report("ERROR no wall with open ground in front")
+		end
+		H.look_at(st.orange.hit)
+		go("shoot_orange", 900)
+	elseif st.stage == "shoot_orange" then
+		if not pm_portals.shoot(2) then
+			return report("ERROR the orange portal did not open")
+		end
+		go("move", 1500)
+	elseif st.stage == "move" then
+		-- stand STAND m in front of the orange portal, the bandits between, off to both sides
+		local O = pm_portals.portals[2]
+		local out = H.v3(O.n.x, 0, O.n.z):normalize()
+		local side = H.v3(O.right.x, 0, O.right.z):normalize()
+		local p = H.along(O.pos, out, STAND)
+		p.y = H.ground_at(p)
+		a:set_actor_position(p, false)
+		st.out, st.side = out, side
+		for k, off in ipairs({ { 5, -2.6 }, { 5.5, 2.4 }, { 7, -0.2 } }) do
+			local q = H.along(H.along(O.pos, out, off[1]), side, off[2])
+			q.y = H.ground_at(q)
+			local lv = level.vertex_id(q)
+			if lv and lv < 4294967295 then
+				st.ids[k] = alife():create("esc_bandit_respawn_1", q, lv, a:game_vertex_id()).id
+			end
+		end
+		go("look", 1200)
+	elseif st.stage == "look" then
+		local O = pm_portals.portals[2]
+		H.look_at(H.v3(O.pos.x, O.pos.y - 0.8, O.pos.z))
+		portal_mod.news("Бандиты перед оранжевым порталом")
+		go("aim", 2500)
+
+	-- 1 and 2: blue portal under their feet
+	elseif st.stage == "aim" then
+		st.k = (st.k or 0) + 1
+		if st.k == 3 then
+			return go("arm_ak", 0)
+		end
+		if not portal_under(st.k) then
+			return go("aim", 0)
+		end
+		portal_mod.news("Портал под ноги")
+		go("shoot_blue", 900)
+	elseif st.stage == "shoot_blue" then
+		local ok = pm_portals.shoot(1)
+		portal_mod.trace(string.format("NPCTEST bandit %d: blue under %s: %s", st.k, vs(st.before), tostring(ok)))
+		-- watch the exit
+		local O = pm_portals.portals[2]
+		H.look_at(H.v3(O.pos.x, O.pos.y - 0.8, O.pos.z))
+		go("check", 3000)
+	elseif st.stage == "check" then
+		local o = obj(st.k)
+		local through = near_orange(o)
+		st.results[st.k] = through
+		portal_mod.trace(string.format("NPCTEST bandit %d %s at %s, %s", st.k, o and (o:alive() and "alive" or "dead") or "offline",
+			o and vs(o:position()) or "-", through and "came out of the orange portal" or "did NOT come out"))
+		go("aim", 1000)
+
+	-- 3: shot dead, then a portal under the corpse
+	elseif st.stage == "arm_ak" then
+		to_slot("wpn_ak74", 2)
+		local o = obj(3)
+		if o then
+			H.look_at(o:bone_position("bip01_spine2"))
+		end
+		portal_mod.news("А теперь труп")
+		go("fire_ak", 2500)
+	elseif st.stage == "fire_ak" then
+		local o = obj(3)
+		if o then
+			H.look_at(o:bone_position("bip01_spine2"))
+		end
+		hold(key_bindings.kWPN_FIRE, 900)
+		go("ak_done", 2500)
+	elseif st.stage == "ak_done" then
+		local o = obj(3)
+		portal_mod.trace("NPCTEST bandit 3 " .. (o and (o:alive() and "still alive" or "dead") or "offline"))
+		if o and o:alive() then
+			return go("fire_ak", 0)
+		end
+		to_slot(pm_portals.GUN, 2)
+		go("aim_corpse", 2000)
+	elseif st.stage == "aim_corpse" then
+		portal_under(3)
+		go("shoot_corpse", 900)
+	elseif st.stage == "shoot_corpse" then
+		local ok = pm_portals.shoot(1)
+		portal_mod.trace(string.format("NPCTEST corpse: blue under %s: %s", vs(st.before), tostring(ok)))
+		local O = pm_portals.portals[2]
+		H.look_at(H.v3(O.pos.x, O.pos.y - 0.8, O.pos.z))
+		go("check_corpse", 3500)
+	elseif st.stage == "check_corpse" then
+		local o = obj(3)
+		st.results[3] = near_orange(o)
+		portal_mod.trace(string.format("NPCTEST corpse at %s, %s", o and vs(o:position()) or "-",
+			st.results[3] and "came out of the orange portal" or "did NOT come out"))
+		local n = (st.results[1] and 1 or 0) + (st.results[2] and 1 or 0) + (st.results[3] and 1 or 0)
+		report(string.format("%s | through the floor portal: bandit 1 %s, bandit 2 %s, corpse %s", n == 3 and "PASS" or "PARTIAL",
+			tostring(st.results[1]), tostring(st.results[2]), tostring(st.results[3])))
+	end
+end

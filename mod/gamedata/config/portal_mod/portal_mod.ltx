@@ -1,0 +1,110 @@
+; Portal 2 x S.T.A.L.K.E.R. (OGSR). Included from config\external.ltx by tools\deploy.py.
+; Kept as UTF-8 in the repo; deploy.py writes it to the game as cp1251 (the game's text encoding).
+
+[portal_mod]
+dev             = true      ; F6: give long fall boots, F7: jump-test drop from 12 m, F8: give portal gun
+autotest        = none      ; lab scenario after a save loads: none | boots | gallery | portals | gun | bar (tools\deploy.py --autotest X)
+autotest_quit   = false     ; quit the game when the scenario is done
+
+;------------------------------------------------------------------------------------------------
+; Long Fall Boots (Portal 2): an artefact for the belt that cancels landing damage.
+; The cancelling is done by scripts\pm_boots.script; the absorbation below is neutral on purpose,
+; so bullets, anomalies and thrown objects still hurt.
+[af_long_fall_boots]:af_base
+GroupControlSection     = spawn_group
+$spawn                  = "artifacts\long fall boots"
+$prefetch               = 16
+cform                   = skeleton
+class                   = ARTEFACT
+
+visual                  = physics\anomaly\artefact_blackdrip.ogf   ; placeholder until there is a boots model
+description             = Экспериментальные пружинные ботинки Aperture Science. Изогнутые пластины за пяткой полностью гасят удар о землю при падении с любой высоты. Чтобы работали, повесьте их на пояс. От пуль и аномалий не защищают.
+inv_name                = Ботинки длинного падения
+inv_name_short          = Ботинки
+inv_weight              = 1.5
+cost                    = 12000
+
+icon_group              = 77        ; textures\ui\ui_icon_equipment_77.dds (own icon sheet)
+inv_grid_x              = 0
+inv_grid_y              = 0
+
+lights_enabled          = false
+
+health_restore_speed    = 0.0
+radiation_restore_speed = 0.0
+satiety_restore_speed   = 0.0
+power_restore_speed     = 0.0
+bleeding_restore_speed  = 0.0
+hit_absorbation_sect    = af_long_fall_boots_absorbation
+
+artefact_activation_seq = af_activation_bold
+
+;------------------------------------------------------------------------------------------------
+; Portal gun (Portal 2). Inherits the Gauss rifle only for its weapon class; model, sounds and ammo display are its own.
+; LMB = blue portal, RMB = orange (scripts\pm_portals.script reads the keys). The weapon itself never fires:
+; its magazine stays empty (ammo_portalgun is never spawned), so LMB only plays snd_empty = the "shot" sound,
+; and zoom/scope are off so RMB does nothing on the engine side.
+[wpn_portalgun]:wpn_gauss
+$spawn                  = "weapons\portalgun"
+description             = Портативное устройство создания порталов Aperture Science. Левая кнопка мыши: синий портал, правая: оранжевый. Войдите в один портал, чтобы выйти из другого.
+inv_name                = Портальная пушка
+inv_name_short          = Портальная пушка
+inv_weight              = 2.5
+cost                    = 50000
+icon_group              = 77
+inv_grid_x              = 1
+inv_grid_y              = 0
+inv_grid_width          = 3
+inv_grid_height         = 2
+
+portal_mod_brief        = --          ; engine portal-mod E3: HUD shows the gun's name and this instead of an ammo count
+ammo_class              = ammo_portalgun
+ammo_limit              = 0
+ammo_current            = 0
+ammo_elapsed            = 0
+ammo_mag_size           = 1
+startup_ammo            = 0
+hit_power               = 0, 0, 0, 0
+hit_impulse             = 0
+sprint_allowed          = true
+
+scope_status            = 0
+zoom_enabled            = false
+rpm_empty_click         = 300
+snd_empty               = portal_mod\silence      ; the Portal 2 shot sound is played by pm_portals.script
+hud                     = wpn_portalgun_hud
+hud_fov                 = 54          ; degrees: Portal 2's viewmodel FOV (the default HUD FOV, ~30, shows it 1.8x too big)
+
+; First-person model: Portal 2's v_portalgun converted from the user's own install by tools\p2_gun_ogf.py
+; (meshes\portal_mod\wpn_portalgun_hud.ogf, not shipped). Like in Portal 2 there are no hands, only the gun.
+[wpn_portalgun_hud]
+visual                  = portal_mod\wpn_portalgun_hud
+position                = 0, 0, 0
+orientation             = 0, 0, 0
+fire_bone               = valvebiped.front_cover
+fire_point              = 0, 0, 0
+anim_idle               = idle
+anim_idle_aim           = idle
+anim_idle_sprint        = idle_sprint
+anim_idle_moving        = idle_moving
+anim_draw               = draw
+anim_holster            = holster
+anim_shoot              = shoot
+anim_reload             = reload
+
+[ammo_portalgun]:ammo_gauss
+$spawn                  = "weapons\ammo\portalgun"
+inv_name                = Заряд портала
+inv_name_short          = Заряд портала
+cost                    = 0
+
+[af_long_fall_boots_absorbation]
+burn_immunity           = 1.0
+strike_immunity         = 1.0
+shock_immunity          = 1.0
+wound_immunity          = 1.0
+radiation_immunity      = 1.0
+telepatic_immunity      = 1.0
+chemical_burn_immunity  = 1.0
+explosion_immunity      = 1.0
+fire_wound_immunity     = 1.0

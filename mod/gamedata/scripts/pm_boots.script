@@ -1,0 +1,52 @@
+-- Long Fall Boots (Portal 2): cancel landing damage while the boots are on the actor's belt.
+--
+-- How the engine does falls (OGSR xrGame): CActor::g_Physics sends a GE_HIT of type strike whose
+-- who_id and weapon_id are the actor itself; it is processed a frame later, after on_actor_land fired.
+-- A thrown object or a poltergeist also gives strike hits, but those don't come right after a landing,
+-- so they still hurt.
+
+SECTION = "af_long_fall_boots"
+
+local LAND_WINDOW_MS = 600
+
+last_land_time = -100000
+last_land_speed = 0
+cancelled_hits = 0
+
+function has_boots_on_belt(actor)
+	local state = { found = false }
+	actor:iterate_belt(function(st, item)
+		if item:section() == SECTION then
+			st.found = true
+		end
+	end, state)
+	return state.found
+end
+
+function on_land(actor, speed)
+	last_land_time = time_global()
+	last_land_speed = speed
+end
+
+function on_before_hit(h)
+	if h.hit_type ~= hit.strike then
+		return
+	end
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	local id = actor:id()
+	if h.who_id ~= id or h.weapon_id ~= id then
+		return
+	end
+	if time_global() - last_land_time > LAND_WINDOW_MS then
+		return
+	end
+	if not has_boots_on_belt(actor) then
+		return
+	end
+	h.ignore_hit = true
+	cancelled_hits = cancelled_hits + 1
+	portal_mod.trace(string.format("long fall boots: landing hit %.3f cancelled (contact speed %.1f)", h.power, last_land_speed))
+end

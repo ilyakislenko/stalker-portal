@@ -1,0 +1,93 @@
+-- Portal 2 x S.T.A.L.K.E.R. Shadow of Chernobyl (OGSR Engine 3.518).
+-- Entry point. bind_stalker.script calls three functions (lines marked "PORTAL_MOD HOOK"):
+--   on_actor_reinit(binder), on_actor_destroy(actor), on_update(delta)
+-- Settings: [portal_mod] in config\portal_mod\portal_mod.ltx.
+
+local settings = nil
+
+function trace(msg)
+	log1("[portal_mod] " .. msg)
+end
+
+local function cfg(key, default)
+	local ini = system_ini()
+	if ini:section_exist("portal_mod") and ini:line_exist("portal_mod", key) then
+		if type(default) == "boolean" then
+			return ini:r_bool("portal_mod", key)
+		end
+		return ini:r_string("portal_mod", key)
+	end
+	return default
+end
+
+function setting(key)
+	if not settings then
+		local scenario = cfg("autotest", "none")
+		settings = {
+			dev = cfg("dev", false),
+			autotest = scenario ~= "none" and scenario ~= "false" and scenario or false,  -- boots | gallery | portals
+			autotest_quit = cfg("autotest_quit", false),
+		}
+	end
+	return settings[key]
+end
+
+function news(text)
+	if db.actor then
+		db.actor:give_game_news(text, "ui\\ui_iconsTotal", Frect():set(0, 658, 83, 47), 0, 5000)
+	end
+end
+
+-- Spawns an item straight into the actor's inventory (it appears a frame or two later).
+function give(section)
+	local a = db.actor
+	alife():create(section, a:position(), a:level_vertex_id(), a:game_vertex_id(), a:id())
+end
+
+function on_actor_reinit(binder)
+	local actor = binder.object
+	actor:set_callback(callback.entity_alive_before_hit, pm_boots.on_before_hit)
+	actor:set_callback(callback.on_actor_land, pm_boots.on_land)
+	actor:set_callback(callback.on_key_press, on_key_press)
+	trace("hooked: dev=" .. tostring(setting("dev")) .. " autotest=" .. tostring(setting("autotest")))
+end
+
+function on_actor_destroy(actor)
+	actor:set_callback(callback.entity_alive_before_hit, nil)
+	actor:set_callback(callback.on_actor_land, nil)
+	actor:set_callback(callback.on_key_press, nil)
+end
+
+local SCENARIOS = { boots = "pm_test", gallery = "pm_gallery", portals = "pm_portal_test", gun = "pm_gun_test", bar = "pm_bar_test", npc = "pm_npc_test" }
+
+function on_update(delta)
+	pm_portals.update(delta)
+	local scenario = setting("autotest")
+	if scenario then
+		_G[SCENARIOS[scenario] or "pm_test"].update()
+	end
+end
+
+-- Lab scenarios end here: flush the log, then quit if [portal_mod] autotest_quit.
+function finish_autotest()
+	get_console():execute("flush")
+	if setting("autotest_quit") then
+		get_console():execute("quit")
+	end
+end
+
+function on_key_press(dik, bind)
+	pm_portals.on_key_press(dik, bind)
+	if not setting("dev") then
+		return
+	end
+	if dik == DIK_keys.DIK_F8 then
+		give(pm_portals.GUN)
+		news("Получена портальная пушка. ЛКМ: синий портал, ПКМ: оранжевый, R: закрыть порталы.")
+	elseif dik == DIK_keys.DIK_F6 then
+		give(pm_boots.SECTION)
+		news("Получены ботинки длинного падения. Повесьте их на пояс.")
+	elseif dik == DIK_keys.DIK_F7 then
+		pm_test.drop(12)
+	end
+end

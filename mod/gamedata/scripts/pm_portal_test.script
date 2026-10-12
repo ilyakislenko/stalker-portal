@@ -1,0 +1,97 @@
+-- Lab scenario "portals": see-through portals drawn by the engine (portal-mod OGSR build, bin_portal).
+--   blue portal 4 m in front of the camera, facing it; orange portal 15 m behind the actor, facing further back.
+--   Through the blue one you see what lies behind you, beyond the orange one. The actor then steps left and
+--   right: the picture in the portal must shift with parallax, like a window, not like a flat screen.
+-- Logs "PORTALTEST" lines; the recording is the oracle.
+
+local st = nil
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+local DOWN = vector():set(0, -1, 0)
+
+local function ground(x, y, z)
+	local top = vector():set(x, y + 30, z)
+	local rq = level.ray_query(top, DOWN, 80, rq_target.rqtStatic, db.actor)
+	return rq.result and (top.y - rq.range) or y
+end
+
+local PW, PH = 6.0, 4.0 -- big test portals: the view through them fills half the screen
+
+local function place_standing(i, x, z, y_hint, normal)
+	local g = ground(x, y_hint, z)
+	pm_portals.place(i, vector():set(x, g + PH / 2 + 0.05, z), normal, vector():set(0, 1, 0), PW, PH)
+end
+
+function update()
+	if not db.actor then
+		return
+	end
+	if not st then
+		st = {}
+		go("move", 4000)
+		portal_mod.trace("AUTOTEST armed (portals) engine=" .. tostring(pm_portals.engine_ok()))
+		return
+	end
+	if time_global() < st.t then
+		return
+	end
+	if st.stage == "move" then
+		if not pm_portals.engine_ok() then
+			portal_mod.trace("AUTOTEST RESULT ERROR stock engine: level.portal_set missing (use bin_portal)")
+			go("done")
+			portal_mod.finish_autotest()
+			return
+		end
+		local g = pm_test.open_ground()
+		if g then
+			db.actor:set_actor_position(g, false)
+		end
+		go("place", 1500)
+	elseif st.stage == "place" then
+		local dir = device().cam_dir
+		local fwd = vector():set(dir.x, 0, dir.z):normalize()
+		local right = vector():set(fwd.z, 0, -fwd.x)
+		local a = db.actor:position()
+		st.fwd, st.right, st.origin = fwd, right, vector():set(a)
+		local back = vector():set(fwd):invert()
+		-- 1. identity: orange on the same spot, back to back with blue -> blue must look perfectly transparent
+		place_standing(1, a.x + fwd.x * 5, a.z + fwd.z * 5, a.y, back)
+		place_standing(2, a.x + fwd.x * 5, a.z + fwd.z * 5, a.y, fwd)
+		portal_mod.news("Тест 1: оранжевый спиной к синему — синий должен стать прозрачным")
+		portal_mod.trace("PORTALTEST identity pair placed")
+		go("side", 4000)
+	elseif st.stage == "side" then
+		-- 2. orange 12 m to the right, facing back towards the actor's line: blue shows a side view of where we stand
+		local a = st.origin
+		place_standing(2, a.x + st.right.x * 15 + st.fwd.x * 5, a.z + st.right.z * 15 + st.fwd.z * 5, a.y, vector():set(st.right):invert())
+		portal_mod.news("Тест 2: оранжевый в 12 м справа — в синем вид сбоку")
+		portal_mod.trace("PORTALTEST orange moved 12 m right, facing left")
+		go("left", 4000)
+	elseif st.stage == "left" then
+		db.actor:set_actor_position(vector():set(st.origin):add(vector():set(st.right):mul(-1.5)), false)
+		db.actor:set_actor_direction(-st.fwd:getH())
+		portal_mod.trace("PORTALTEST step left")
+		go("right", 2500)
+	elseif st.stage == "right" then
+		db.actor:set_actor_position(vector():set(st.origin):add(vector():set(st.right):mul(1.5)), false)
+		db.actor:set_actor_direction(-st.fwd:getH())
+		portal_mod.trace("PORTALTEST step right")
+		go("turn", 2500)
+	elseif st.stage == "turn" then
+		db.actor:set_actor_position(st.origin, false)
+		db.actor:set_actor_direction(-vector():set(st.fwd):invert():getH())
+		portal_mod.news("Разворот: за спиной оранжевый портал")
+		portal_mod.trace("PORTALTEST turned around")
+		go("end", 3000)
+	elseif st.stage == "end" then
+		portal_mod.trace("AUTOTEST RESULT portals rendered (check the video)")
+		pm_portals.remove(1)
+		pm_portals.remove(2)
+		go("done")
+		portal_mod.finish_autotest()
+	end
+end

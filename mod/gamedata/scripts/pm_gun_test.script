@@ -1,0 +1,289 @@
+-- Lab scenario "gun": the portal gun as a player would use it (portal-mod OGSR build, bin_portal).
+--   gun in hands -> find two walls around -> turn to each and shoot (LMB blue, RMB orange through pm_portals.shoot)
+--   -> walk into the blue portal (pushed towards it) and come out of the orange one
+--   -> blue portal on the floor, fall into it from 8 m and fly out of the orange wall portal (momentum).
+-- Logs "GUNTEST" lines and an "AUTOTEST RESULT" line; the recording shows it.
+
+local st = nil
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+local DOWN = vector():set(0, -1, 0)
+
+local function ground_at(p)
+	local top = vector():set(p.x, p.y + 30, p.z)
+	local rq = level.ray_query(top, DOWN, 80, rq_target.rqtStatic, db.actor)
+	return rq.result and (top.y - rq.range) or p.y
+end
+
+-- Walls the camera can see at eye height: rays in 24 directions, a surface facing back within 4..25 m.
+local function find_walls()
+	local eye = device().cam_pos
+	local walls = {}
+	for k = 0, 23 do
+		local a = k * math.pi / 12
+		local dir = vector():set(math.sin(a), 0, math.cos(a))
+		local rq = level.ray_query(eye, dir, 30, rq_target.rqtStatic, db.actor)
+		if rq.result and rq.range > 4 and rq.range < 25 then
+			local n = level.ray_query_normal(eye, dir, 30)
+			if math.abs(n.y) < 0.3 and n:dotproduct(dir) < -0.7 then
+				-- a wall you can walk up to: flat ground in front of it, the aim point 0.8..2.5 m above that ground
+				local hit = vector():set(eye):add(vector():set(dir):mul(rq.range))
+				local g_near = ground_at(vector():set(hit):add(vector():set(n):mul(0.7)))
+				local g_far = ground_at(vector():set(hit):add(vector():set(n):mul(3)))
+				local h = hit.y - g_near
+				if math.abs(g_near - g_far) < 0.4 and h > 0.8 and h < 2.5 then
+					table.insert(walls, { dir = dir, dist = rq.range, n = n })
+				end
+			end
+		end
+	end
+	return walls
+end
+
+local function face(dir)
+	db.actor:set_actor_direction(-dir:getH())
+end
+
+local function report(verdict)
+	portal_mod.trace(string.format("AUTOTEST RESULT %s | travels=%d", verdict, pm_portals.travels))
+	go("done")
+	portal_mod.finish_autotest()
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	if not st then
+		st = { walls = {}, tries = 0 }
+		go("move", 4000)
+		portal_mod.trace("AUTOTEST armed (gun) engine=" .. tostring(pm_portals.engine_ok()))
+		return
+	end
+	if time_global() < st.t then
+		return
+	end
+
+	if st.stage == "move" then
+		if not pm_portals.engine_ok() then
+			return report("ERROR stock engine (use bin_portal)")
+		end
+		-- a repeatable take: on Cordon, the yard between two village houses (walls 6-7 m away on two sides)
+		local g
+		if level.name() == "l01_escape" then
+			g = vector():set(-221.5, -18.5, -140.0)
+			g.y = ground_at(g)
+		else
+			g = pm_test.open_ground()
+		end
+		if g then
+			a:set_actor_position(g, false)
+		end
+		portal_mod.give(pm_portals.GUN)
+		go("arm", 1200)
+	elseif st.stage == "arm" then
+		local gun = a:object(pm_portals.GUN)
+		if not gun then
+			return report("ERROR the gun never appeared in the inventory")
+		end
+		local held = a:item_in_slot(2)
+		if held and held:id() ~= gun:id() then
+			a:move_to_ruck(held)
+		end
+		a:move_to_slot(gun, false)
+		a:activate_slot(2)
+		portal_mod.news("Портальная пушка в руках")
+		go("scan", 1500)
+	elseif st.stage == "scan" then
+		st.walls = find_walls()
+		table.sort(st.walls, function(x, y) return x.dist < y.dist end)
+		st.k = 0
+		portal_mod.trace(string.format("GUNTEST %d wall directions found", #st.walls))
+		go("aim")
+	elseif st.stage == "aim" then
+		-- next candidate wall; the orange one must be at least 60 degrees away from the blue one
+		st.k = st.k + 1
+		local w = st.walls[st.k]
+		while w and st.blue_dir and w.dir:dotproduct(st.blue_dir) > 0.5 do
+			st.k = st.k + 1
+			w = st.walls[st.k]
+		end
+		if not w then
+			-- nothing usable around here: try another open spot
+			st.tries = st.tries + 1
+			if st.tries > 5 then
+				return report("ERROR no two portal-able walls found")
+			end
+			local p = a:position()
+			a:set_actor_position(vector():set(p.x + math.random(-25, 25), p.y + 2, p.z + math.random(-25, 25)), false)
+			go("scan", 1500)
+			return
+		end
+		st.cur = w
+		face(w.dir)
+		go("shoot", 700)
+	elseif st.stage == "shoot" then
+		local i = st.blue_dir and 2 or 1
+		local ok = pm_portals.shoot(i)
+		portal_mod.trace(string.format("GUNTEST shot %s at %.1f m: %s", i == 1 and "blue" or "orange", st.cur.dist, tostring(ok)))
+		if ok then
+			-- like a player aiming at the bottom of the wall: let the portal stand on the ground so it can be walked into
+			local p = pm_portals.portals[i]
+			local foot = vector():set(p.pos):add(vector():set(p.n):mul(0.6))
+			local bottom = ground_at(foot) + pm_portals.H / 2 + 0.05
+			if p.pos.y > bottom then
+				pm_portals.place(i, vector():set(p.pos.x, bottom, p.pos.z), p.n, p.up)
+			end
+		end
+		if ok and i == 1 then
+			st.blue_dir = st.cur.dir
+			go("aim", 1200)
+		elseif ok then
+			go("showcase", 1500)
+		else
+			go("aim", 800)
+		end
+	elseif st.stage == "showcase" then
+		-- for the video: face the blue portal's wall and fire three times, the gun kicks each time
+		st.shots = (st.shots or 0) + 1
+		face(vector():set(pm_portals.portals[1].n):invert())
+		if st.shots > 1 then
+			pm_portals.shoot(1)
+		end
+		go(st.shots < 4 and "showcase" or "approach", 1300)
+	elseif st.stage == "approach" then
+		local B = pm_portals.portals[1]
+		local start = vector():set(B.pos):add(vector():set(B.n):mul(3))
+		start.y = ground_at(start)
+		a:set_actor_position(start, false)
+		face(vector():set(B.n):invert())
+		portal_mod.news("Входим в синий портал")
+		st.travels0 = pm_portals.travels
+		st.push_until = time_global() + 4000
+		st.next_diag = 0
+		go("walk", 600)
+	elseif st.stage == "walk" then
+		-- real input: hold the "forward" key like a player would
+		if not st.walking then
+			st.walk_dik = bind_to_dik(key_bindings.kFWD)
+			level.send_event_key_press(st.walk_dik)
+			st.walking = true
+		end
+		level.send_event_key_hold(st.walk_dik) -- movement keys are polled as "held" every frame
+		local B = pm_portals.portals[1]
+		if time_global() >= st.next_diag then
+			st.next_diag = time_global() + 400
+			local d = vector():sub(a:position(), B.pos)
+			portal_mod.trace(string.format("GUNTEST walk: z=%.2f x=%.2f y(feet)=%.2f speed=%.1f", d:dotproduct(B.n), d:dotproduct(B.right),
+				d:dotproduct(B.up), level.actor_velocity():magnitude()))
+		end
+		if pm_portals.travels > st.travels0 or time_global() > st.push_until then
+			level.send_event_key_release(st.walk_dik)
+			st.walking = false
+		end
+		if pm_portals.travels > st.travels0 then
+			local O = pm_portals.portals[2]
+			portal_mod.trace(string.format("GUNTEST walked through: %.1f m from the orange portal", a:position():distance_to(O.pos)))
+			go("floor", 3000)
+		elseif time_global() > st.push_until then
+			return report("FAIL walked at the blue portal but did not come through")
+		end
+	elseif st.stage == "floor" then
+		-- out in the open (the yard is cramped), then real shots at the ground the gun can see:
+		-- slopes of 8..32 degrees first, steepest first, then flatter ground
+		st.floor_tries = (st.floor_tries or 0) + 1
+		local g0 = pm_test.open_ground()
+		if g0 then
+			a:set_actor_position(g0, false)
+		end
+		go("floor_scan", 1200)
+	elseif st.stage == "floor_scan" then
+		local cam = device().cam_pos
+		st.grounds = {}
+		for _, d in ipairs({ 4, 6, 8, 10, 12 }) do
+			for k = 0, 15 do
+				local ang = k * math.pi / 8
+				local top = vector():set(cam.x + d * math.sin(ang), cam.y + 20, cam.z + d * math.cos(ang))
+				local rq = level.ray_query(top, DOWN, 60, rq_target.rqtStatic, db.actor)
+				if rq.result then
+					local n = level.ray_query_normal(top, DOWN, 60)
+					local tilt = math.deg(math.acos(math.min(1, n.y)))
+					local p = vector():set(top.x, top.y - rq.range, top.z)
+					local to = vector():sub(p, cam)
+					local dist = to:magnitude()
+					local los = level.ray_query(cam, to:normalize(), dist + 1, rq_target.rqtStatic, db.actor)
+					if tilt <= 32 and los.result and math.abs(los.range - dist) < 0.4 then -- the gun sees that spot
+						table.insert(st.grounds, { p = p, tilt = tilt })
+					end
+				end
+			end
+		end
+		table.sort(st.grounds, function(x, y)
+			local sx, sy = x.tilt >= 8 and 1 or 0, y.tilt >= 8 and 1 or 0
+			if sx ~= sy then
+				return sx > sy
+			end
+			return x.tilt > y.tilt
+		end)
+		portal_mod.trace(string.format("GUNTEST %d ground spots in sight (steepest %.0f deg)", #st.grounds, st.grounds[1] and st.grounds[1].tilt or -1))
+		if #st.grounds == 0 then
+			if st.floor_tries < 4 then
+				go("floor")
+			else
+				return report("FAIL no ground in sight")
+			end
+			return
+		end
+		st.g = 0
+		go("floor_aim")
+	elseif st.stage == "floor_aim" then
+		st.g = st.g + 1
+		local g = st.grounds[st.g]
+		if not g or st.g > 12 then
+			return report("FAIL no portal on the ground")
+		end
+		face(vector():sub(g.p, device().cam_pos):normalize())
+		go("floor_shot", 600)
+	elseif st.stage == "floor_shot" then
+		local g = st.grounds[st.g]
+		local cam = device().cam_pos
+		pm_portals.fit_debug = st.g == 1 or st.g == #st.grounds -- log the rays of the first and the flat attempt
+		local ok = pm_portals.shoot(1, cam, vector():sub(g.p, cam):normalize())
+		pm_portals.fit_debug = false
+		local B = pm_portals.portals[1]
+		portal_mod.trace(string.format("GUNTEST blue on the ground (slope %.0f deg): %s, portal tilt %.0f deg", g.tilt, tostring(ok),
+			math.deg(math.acos(math.min(1, B.n.y)))))
+		if not ok then
+			go("floor_aim", 700)
+			return
+		end
+		portal_mod.news(string.format("Синий портал на земле, склон %.0f° — прыжок с 8 метров", g.tilt))
+		st.floor = B.pos
+		go("drop", 1500)
+	elseif st.stage == "drop" then
+		st.travels0 = pm_portals.travels
+		a:set_actor_position(vector():set(st.floor.x, st.floor.y + 8, st.floor.z), false)
+		st.drop_time = time_global()
+		go("falling")
+	elseif st.stage == "falling" then
+		if pm_portals.travels > st.travels0 then
+			local v = level.actor_velocity()
+			portal_mod.trace(string.format("GUNTEST fell through the floor portal, out at %.1f m/s (%.1f, %.1f, %.1f)", v:magnitude(), v.x, v.y, v.z))
+			st.out_speed = v:magnitude()
+			go("report", 3000)
+		elseif time_global() - st.drop_time > 5000 then
+			return report("FAIL fell but did not go through the floor portal")
+		end
+	elseif st.stage == "report" then
+		pm_portals.close_all() -- R: Portal 2's fizzle animation, both portals close
+		st.verdict = st.out_speed and st.out_speed > 5 and "PASS" or "FAIL no momentum out of the portal"
+		go("end", 2000)
+	elseif st.stage == "end" then
+		report(st.verdict)
+	end
+end

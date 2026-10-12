@@ -1,0 +1,11 @@
+_vanilla/
+_p2/
+_backup/
+*.pyc
+_lab/
+_videos/
+docs/ogsr-ref/
+_gen/
+_frames/
+_frames/
+__pycache__/

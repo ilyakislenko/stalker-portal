@@ -1,0 +1,364 @@
+-- Portal gun (Portal 2) for S.T.A.L.K.E.R.: shooting portals, their state and opening animation, walking through
+-- them with momentum. Drawing and the view through a portal are done by the engine (portal-mod OGSR build,
+-- bin_portal\xrEngine.exe): level.portal_set / portal_clear / ray_query_normal / actor_velocity / set_actor_velocity.
+
+GUN = "wpn_portalgun"
+W, H = 1.2, 2.0           -- portal size in metres (Portal 2: 64 x 112 units, about 1.2 x 2.1 m)
+local OPEN_MS = 350       -- opening animation
+local RANGE = 150         -- how far the gun reaches
+local DOWN = vector():set(0, -1, 0)
+
+-- portals[1] = blue (engine slot 0), portals[2] = orange (slot 1): {pos, n, up, right, w, h, born}
+portals = {}
+
+local sounds = {}
+local function sound(name)
+	if not sounds[name] then
+		sounds[name] = sound_object("portal_mod\\" .. name)
+	end
+	return sounds[name]
+end
+
+local function play2d(name)
+	if db.actor then
+		sound(name):play(db.actor, 0, sound_object.s2d)
+	end
+end
+
+local function play3d(name, pos)
+	if db.actor then
+		sound(name):play_at_pos(db.actor, pos, 0, sound_object.s3d)
+	end
+end
+
+function engine_ok()
+	return level.portal_set ~= nil
+end
+
+local function right_of(up, n)
+	return vector():crossproduct(up, n):normalize()
+end
+
+-- Put portal `i` (1 blue, 2 orange) at pos on a surface with normal n; `up` = the portal's up axis.
+-- w, h: size in metres (default W x H; lab tests use big ones to judge the view through them).
+function place(i, pos, n, up, w, h)
+	portals[i] = {
+		pos = vector():set(pos), n = vector():set(n), up = vector():set(up), right = right_of(up, n),
+		w = w or W, h = h or H, born = time_global(),
+	}
+end
+
+function remove(i)
+	portals[i] = nil
+	if engine_ok() then
+		level.portal_clear(i - 1)
+	end
+end
+
+function linked()
+	return portals[1] ~= nil and portals[2] ~= nil
+end
+
+---------------------------------------------------------------------------------------------------- shooting
+-- Up axis of a portal on a surface: walls keep "up" towards the sky; on floors and ceilings the top of the
+-- portal points away from the shooter, like Portal 2.
+local function frame(n, view_dir)
+	local up
+	if math.abs(n.y) < 0.7 then
+		up = vector():set(0, 1, 0):sub(vector():set(n):mul(n.y)):normalize()
+	else
+		local f = vector():set(view_dir.x, 0, view_dir.z)
+		if f:magnitude() < 0.001 then
+			f = vector():set(0, 0, 1)
+		end
+		f:normalize()
+		up = vector():set(f):sub(vector():set(n):mul(f:dotproduct(n))):normalize()
+	end
+	return up, right_of(up, n)
+end
+
+-- The surface under an oval centred at c: 1 centre + 12 outline rays along -n, from half a metre out.
+-- Returns the best-fit plane (centroid, normal by Newell's method over the outline), the highest bump above it
+-- and how far the surface strays from it; nil over an edge or a hole.
+local SURFACE_SLACK = 0.25 -- metres of bumps a portal accepts (terrain, rough walls); Portal 2 only takes flat panels
+fit_why = "" -- why the last fit failed (logged with "invalid surface")
+
+local function surface_plane(c, n, up, right, w, h)
+	local probe = vector():set(n):invert()
+	local pts = {}
+	local offsets = { { 0, 0 } }
+	for k = 0, 11 do
+		local a = k * math.pi / 6
+		table.insert(offsets, { 0.92 * w / 2 * math.cos(a), 0.92 * h / 2 * math.sin(a) })
+	end
+	for _, o in ipairs(offsets) do
+		local start = vector():set(c):add(vector():set(right):mul(o[1])):add(vector():set(up):mul(o[2])):add(vector():set(n):mul(0.5))
+		local rq = level.ray_query(start, probe, 1.0 + SURFACE_SLACK, rq_target.rqtStatic, db.actor)
+		if fit_debug then
+			portal_mod.trace(string.format("  sample (%.2f, %.2f) start (%.2f, %.2f, %.2f) n=(%.2f, %.2f, %.2f) -> %s %.2f", o[1], o[2],
+				start.x, start.y, start.z, n.x, n.y, n.z, tostring(rq.result), rq.range))
+		end
+		if not rq.result or rq.range < 0.5 - SURFACE_SLACK then
+			fit_why = rq.result and string.format("bump %.2f m above", 0.5 - rq.range) or "edge or hole"
+			return nil -- an edge, a hole, or something sticking out of the surface here
+		end
+		table.insert(pts, vector():set(start):add(vector():set(probe):mul(rq.range)))
+	end
+	local centroid = vector():set(0, 0, 0)
+	for _, q in ipairs(pts) do
+		centroid:add(q)
+	end
+	centroid:mul(1 / #pts)
+	local nf = vector():set(0, 0, 0)
+	for k = 2, #pts do -- outline points 2..13, in order around the oval
+		local a, b = pts[k], pts[k == #pts and 2 or k + 1]
+		nf.x = nf.x + (a.y - b.y) * (a.z + b.z)
+		nf.y = nf.y + (a.z - b.z) * (a.x + b.x)
+		nf.z = nf.z + (a.x - b.x) * (a.y + b.y)
+	end
+	if nf:magnitude() < 1e-6 then
+		return nil
+	end
+	nf:normalize()
+	if nf:dotproduct(n) < 0 then
+		nf:invert()
+	end
+	local above, spread = 0, 0
+	for _, q in ipairs(pts) do
+		local d = vector():sub(q, centroid):dotproduct(nf)
+		above = math.max(above, d)
+		spread = math.max(spread, math.abs(d))
+	end
+	return centroid, nf, above, spread
+end
+
+-- Like Portal 2: the portal lies on the surface it hits, along its slope; one that hangs over an edge slides back
+-- onto the surface. Returns centre, normal, up - or nil.
+local function fit(hit, n, view_dir, w, h)
+	local up, right = frame(n, view_dir)
+	local candidates = { vector():set(hit) }
+	for _, step in ipairs({ 0.15, 0.3, 0.45, 0.6, 0.8, 1.0 }) do
+		for k = 0, 7 do
+			local a = k * math.pi / 4
+			table.insert(candidates, vector():set(hit):add(vector():set(right):mul(step * math.cos(a))):add(vector():set(up):mul(step * math.sin(a))))
+		end
+	end
+	for _, c in ipairs(candidates) do
+		local centroid, nf, above, spread = surface_plane(c, n, up, right, w, h)
+		if centroid and spread > SURFACE_SLACK then
+			fit_why = string.format("uneven %.2f m", spread)
+		end
+		if centroid and spread <= SURFACE_SLACK then
+			-- orient to the fitted plane; float just above its highest bump so the ground does not cut the oval
+			local up2 = frame(nf, view_dir)
+			local centre = vector():set(centroid):add(vector():set(nf):mul(above))
+			local front = level.ray_query(vector():set(centre):add(vector():set(nf):mul(0.05)), nf, 0.8, rq_target.rqtStatic, db.actor)
+			if not front.result then
+				return centre, nf, up2
+			end
+			fit_why = string.format("blocked %.2f m in front", front.range)
+		end
+	end
+	return nil
+end
+
+-- The gun in the actor's hands plays one of its HUD motions (keys of [wpn_portalgun_hud]: anim_shoot = Portal 2's
+-- fire1 with its kick, anim_reload = fizzle). The engine goes back to idle when it ends.
+-- Played on the next update: the engine handles the same mouse click after our key callback and would cut it.
+local pending_motion, pending_at = nil, 0
+
+local function gun_motion(key)
+	pending_motion, pending_at = key, time_global() + 30
+end
+
+local function play_pending_motion()
+	if pending_motion and time_global() >= pending_at then
+		local item = db.actor and db.actor:active_item()
+		if item and item:section() == GUN then
+			local ms = item:play_hud_motion(pending_motion)
+			portal_mod.trace(string.format("gun motion %s: %d ms", pending_motion, ms))
+		end
+		pending_motion = nil
+	end
+end
+
+local function fizzle(pos)
+	if pos then
+		play3d("portal_invalid_surface_0" .. math.random(1, 4), pos)
+	else
+		play2d("portal_fizzle_0" .. math.random(1, 2))
+	end
+	portal_mod.trace("portal: invalid surface (" .. tostring(fit_why) .. ")")
+end
+
+-- Fire portal `i` (1 blue, 2 orange) where the camera looks (or from `from` along `dir`). True if a portal opened.
+function shoot(i, from, dir)
+	if not engine_ok() then
+		portal_mod.news("Портальной пушке нужен движок portal-mod (bin_portal\\xrEngine.exe)")
+		return false
+	end
+	local cam = from or device().cam_pos
+	dir = dir or device().cam_dir
+	gun_motion("anim_shoot")
+	play2d((i == 1 and "wpn_portal_gun_fire_blue_0" or "wpn_portal_gun_fire_red_0") .. math.random(1, 3))
+	local rq = level.ray_query(cam, dir, RANGE, rq_target.rqtStatic, db.actor)
+	if not rq.result then
+		fizzle()
+		return false
+	end
+	local hit = vector():set(cam):add(vector():set(dir):mul(rq.range))
+	local n = level.ray_query_normal(cam, dir, RANGE)
+	if n:magnitude() < 0.5 then
+		fizzle(hit)
+		return false
+	end
+	local c, up
+	c, n, up = fit(hit, n, dir, W, H)
+	if not c then
+		fizzle(hit)
+		return false
+	end
+	local other = portals[3 - i]
+	if other and other.n:dotproduct(n) > 0.9 and other.pos:distance_to(c) < math.max(W, H) then
+		fizzle(hit) -- no portal on top of the other one
+		return false
+	end
+	place(i, c, n, up)
+	play3d(i == 1 and "portal_open_blue_01" or ("portal_open_red_0" .. math.random(1, 2)), c)
+	portal_mod.trace(string.format("portal %d at (%.2f, %.2f, %.2f) n=(%.2f, %.2f, %.2f)", i, c.x, c.y, c.z, n.x, n.y, n.z))
+	return true
+end
+
+function close_all()
+	gun_motion("anim_reload") -- Portal 2's fizzle
+	if portals[1] or portals[2] then
+		play2d("portal_fizzle_0" .. math.random(1, 2))
+	end
+	remove(1)
+	remove(2)
+end
+
+-- Gun input: LMB blue, RMB orange, reload key closes both. Only with the gun in hands and no window open.
+function on_key_press(dik, bind)
+	local a = db.actor
+	if not a or level.main_input_receiver() ~= nil then
+		return
+	end
+	local item = a:active_item()
+	if not item or item:section() ~= GUN then
+		return
+	end
+	if bind == key_bindings.kWPN_FIRE then
+		shoot(1)
+	elseif bind == key_bindings.kWPN_ZOOM then
+		shoot(2)
+	elseif bind == key_bindings.kWPN_RELOAD then
+		close_all()
+	end
+end
+
+---------------------------------------------------------------------------------------------------- travelling
+-- A direction through portal A and out of portal B: a half turn about the portal's up axis.
+function map_dir(A, B, v)
+	local x, y, z = v:dotproduct(A.right), v:dotproduct(A.up), v:dotproduct(A.n)
+	return vector():set(B.right):mul(-x):add(vector():set(B.up):mul(y)):add(vector():set(B.n):mul(-z))
+end
+
+local function clamp(v, lo, hi)
+	return math.max(lo, math.min(hi, v))
+end
+
+local function kind(p) -- "floor", "ceiling" or "wall"
+	if p.n.y > 0.7 then
+		return "floor"
+	elseif p.n.y < -0.7 then
+		return "ceiling"
+	end
+	return "wall"
+end
+
+-- The part of the actor that touches the portal first: body centre for walls, feet for floors, head for ceilings.
+local BODY, HEAD = 0.9, 1.75
+local function ref_point(feet, p)
+	local k = kind(p)
+	return vector():set(feet.x, feet.y + (k == "wall" and BODY or (k == "ceiling" and HEAD or 0)), feet.z)
+end
+
+local cooldown_until = 0
+local must_leave = nil -- the exit portal: it cannot take the actor back until the actor has stepped off it
+travels = 0
+
+local function travel(ia, A, B, x, y, vel)
+	local kb = kind(B)
+	local out = kb == "floor" and 0.3 or (kb == "ceiling" and 0.35 or 0.75)
+	local xr = clamp(-x, -(B.w / 2 - 0.35), B.w / 2 - 0.35)
+	local yr = kb == "wall" and clamp(y, -(B.h / 2 - BODY), B.h / 2 - BODY) or clamp(y, -(B.h / 2 - 0.35), B.h / 2 - 0.35)
+	local ref = vector():set(B.pos):add(vector():set(B.right):mul(xr)):add(vector():set(B.up):mul(yr)):add(vector():set(B.n):mul(out))
+	local feet = vector():set(ref.x, ref.y - (kb == "wall" and BODY or (kb == "ceiling" and HEAD or 0)), ref.z)
+
+	local look = map_dir(A, B, device().cam_dir)
+	local v_out = map_dir(A, B, vel)
+	if kb == "floor" then -- out of a floor portal you always pop up a little, like Portal 2
+		local s = v_out:dotproduct(B.n)
+		if s < 3.5 then
+			v_out:add(vector():set(B.n):mul(3.5 - s))
+		end
+	end
+
+	db.actor:set_actor_position(feet, false)
+	if math.abs(look.y) < 0.98 then
+		db.actor:set_actor_direction(-look:getH())
+	end
+	level.set_actor_velocity(v_out)
+
+	play2d("portal_enter_0" .. math.random(1, 3))
+	cooldown_until = time_global() + 150
+	must_leave = 3 - ia
+	travels = travels + 1
+	portal_mod.trace(string.format("travel %d->%d: in %.1f m/s, out (%.1f, %.1f, %.1f)", ia, 3 - ia, vel:magnitude(), v_out.x, v_out.y, v_out.z))
+end
+
+local function travel_check(dt)
+	if not linked() or time_global() < cooldown_until then
+		return
+	end
+	local feet = db.actor:position()
+	local vel = level.actor_velocity()
+	for i = 1, 2 do
+		local A = portals[i]
+		local d = vector():sub(ref_point(feet, A), A.pos)
+		local x, y, z = d:dotproduct(A.right), d:dotproduct(A.up), d:dotproduct(A.n)
+		local inside = (x / (A.w / 2)) ^ 2 + (y / (A.h / 2)) ^ 2 < 1.0
+		local approach = -vel:dotproduct(A.n) -- speed towards the portal surface
+		-- X-Ray can't switch off the wall's collision behind a portal (Portal 2 does), so the actor goes through a
+		-- little before touching it; ledges and frames in front of walls stop the body ~0.7 m out
+		local reach = (kind(A) == "wall" and 0.85 or 0.35) + math.max(0, approach) * 0.05 -- look ahead 50 ms
+		if must_leave == i then
+			if not inside or z > reach + 0.4 then
+				must_leave = nil
+			end
+		elseif inside and z > -0.3 and z < reach and approach > -0.5 then
+			travel(i, A, portals[3 - i], x, y, vel)
+			return
+		end
+	end
+end
+
+function update(delta)
+	if not engine_ok() then
+		return
+	end
+	local now = time_global()
+	for i = 1, 2 do
+		local p = portals[i]
+		if p then
+			local open = math.min(1, (now - p.born) / OPEN_MS)
+			open = 1 - (1 - open) * (1 - open) -- ease out
+			level.portal_set(i - 1, p.pos, p.n, p.up, p.w, p.h, i - 1, linked(), open)
+		end
+	end
+	if db.actor then
+		play_pending_motion()
+		travel_check(delta)
+	end
+end

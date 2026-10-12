@@ -1,0 +1,218 @@
+-- Drop tests for the long fall boots.
+--   drop(h): teleport the actor h metres up (or next to a spot with open sky) and let it fall.
+--   update(): with [portal_mod] autotest = true, runs once after a save loads:
+--     fall without boots -> give boots, put them on the belt -> fall again -> log PASS/FAIL.
+-- Results go to the xray log as lines starting with "[portal_mod] AUTOTEST".
+
+local UP = vector():set(0, 1, 0)
+local DOWN = vector():set(0, -1, 0)
+
+-- Open sky above a ground point. Cast DOWN from high up: ray picks skip back faces, so a ray going up from
+-- a basement passes through the terrain above it; coming from the sky, the first hit must be this ground.
+local SKY_RAY = 150
+
+local function sky_free(pos)
+	local top = vector():set(pos.x, pos.y + SKY_RAY, pos.z)
+	local rq = level.ray_query(top, DOWN, SKY_RAY + 2, rq_target.rqtBoth, db.actor)
+	return rq.result and math.abs(top.y - rq.range - pos.y) < 1.5
+end
+
+-- Ground height under a point (nil if nothing below within 60 m).
+local function ground_below(pos)
+	local rq = level.ray_query(pos, DOWN, 60, rq_target.rqtStatic, db.actor)
+	if rq.result then
+		return pos.y - rq.range
+	end
+	return nil
+end
+
+local function describe_ceiling(pos, h)
+	local rq = level.ray_query(vector():set(pos.x, pos.y + 1.9, pos.z), UP, h + 1, rq_target.rqtBoth, db.actor)
+	if not rq.result then
+		return "open sky"
+	end
+	local what = rq.object and rq.object:name() or "level geometry"
+	return string.format("%s at %.1f m", what, rq.range)
+end
+
+-- A point h metres above ground with nothing overhead: here, on rings around the actor, or above the
+-- nearest of a few hundred random AI-graph vertices of the level (walkable ground, so never inside walls).
+local function find_drop_point(h)
+	local p = db.actor:position()
+	if sky_free(p) then
+		return vector():set(p.x, p.y + h, p.z)
+	end
+	portal_mod.trace(string.format("drop: %s, actor at (%.1f, %.1f, %.1f) on %s: ceiling: %s",
+		"no sky here", p.x, p.y, p.z, level.name(), describe_ceiling(p, h)))
+	for r = 4, 24, 4 do
+		for i = 0, 7 do
+			local a = i * math.pi / 4
+			local top = vector():set(p.x + r * math.cos(a), p.y + h, p.z + r * math.sin(a))
+			local g = ground_below(top)
+			if g and top.y - g > h - 2 and sky_free(vector():set(top.x, g, top.z)) then
+				return top
+			end
+		end
+	end
+	local count = level.vertex_count()
+	local best, best_d = nil, nil
+	for _ = 1, 600 do
+		local v = level.vertex_position(math.random(0, count - 1))
+		if sky_free(v) then
+			local d = v:distance_to(p)
+			if not best or d < best_d then
+				best, best_d = v, d
+			end
+		end
+	end
+	if best then
+		portal_mod.trace(string.format("drop: using AI vertex %.0f m away", best_d))
+		return vector():set(best.x, best.y + h, best.z)
+	end
+	return nil
+end
+
+function drop(h)
+	local top = find_drop_point(h)
+	if not top then
+		portal_mod.trace("drop: no open sky near the actor")
+		portal_mod.news("Нет места для теста: над головой потолок.")
+		return false
+	end
+	-- false = ForceTransform. With true (skip collision correction) an actor that was standing still stays
+	-- frozen in the air: its physics character is asleep and that path doesn't wake it (seen on OGSR 3.518).
+	db.actor:set_actor_position(top, false)
+	portal_mod.trace(string.format("drop: from %.1f m at (%.1f, %.1f, %.1f)", h, top.x, top.y, top.z))
+	return top
+end
+
+-- The engine's health setter adds a delta (ChangeHealth). Never set a value that could kill.
+local function top_up_health()
+	local a = db.actor
+	local d = 1 - a.health
+	if d > 0.001 then
+		a.health = d
+	end
+end
+
+local st = nil
+local results = {}
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+local function start_fall(which)
+	top_up_health()
+	st.which = which
+	st.h0 = db.actor.health
+	st.drop_time = time_global()
+	st.top = drop(12)
+	st.next_diag = 0
+	if st.top then
+		go("falling")
+	else
+		results[which] = { error = "no open sky" }
+		go("report")
+	end
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	if not st then
+		st = {}
+		go("settle", 6000)
+		portal_mod.trace("AUTOTEST armed")
+		return
+	end
+	if time_global() < st.t then
+		return
+	end
+
+	-- Paced for a video take: each step waits a couple of seconds and says on screen what happens.
+	if st.stage == "settle" then
+		local b = a:object(pm_boots.SECTION)
+		if b and a:is_on_belt(b) then
+			a:move_to_ruck(b)
+		end
+		portal_mod.news("Тест 1: падение с 12 метров без ботинок")
+		go("no_boots", 2500)
+	elseif st.stage == "no_boots" then
+		start_fall("no_boots")
+	elseif st.stage == "falling" then
+		local now = time_global()
+		if now >= st.next_diag then
+			st.next_diag = now + 1000
+			local d = device()
+			portal_mod.trace(string.format("fall diag: t=%d y=%.2f paused=%s dt=%d f_dt=%.4f frame=%d",
+				now - st.drop_time, a:position().y, tostring(d:is_paused()), d.time_delta, d.f_time_delta, d.frame))
+		end
+		if pm_boots.last_land_time > st.drop_time then
+			go("landed", 1500)
+		elseif time_global() - st.drop_time > 15000 then
+			results[st.which] = { error = "never landed" }
+			go(st.which == "no_boots" and "give" or "report")
+		end
+	elseif st.stage == "landed" then
+		local dmg = st.h0 - a.health
+		results[st.which] = { damage = dmg, speed = pm_boots.last_land_speed }
+		portal_mod.trace(string.format("AUTOTEST %s: damage %.3f, contact speed %.1f", st.which, dmg, pm_boots.last_land_speed))
+		portal_mod.news(string.format("%s: урон %d%% здоровья (скорость удара %.0f м/с)",
+			st.which == "no_boots" and "Без ботинок" or "В ботинках", math.max(0, math.floor(dmg * 100 + 0.5)), pm_boots.last_land_speed))
+		top_up_health()
+		go(st.which == "no_boots" and "give" or "report", 3000)
+	elseif st.stage == "give" then
+		if not a:object(pm_boots.SECTION) then
+			portal_mod.give(pm_boots.SECTION)
+		end
+		portal_mod.news("Тест 2: ботинки длинного падения на поясе")
+		st.give_time = time_global()
+		go("equip", 300)
+	elseif st.stage == "equip" then
+		local b = a:object(pm_boots.SECTION)
+		if b then
+			a:move_to_belt(b)
+			go("check_belt", 2500)
+		elseif time_global() - st.give_time > 5000 then
+			results.boots = { error = "boots never appeared in inventory" }
+			go("report")
+		end
+	elseif st.stage == "check_belt" then
+		if pm_boots.has_boots_on_belt(a) then
+			start_fall("boots")
+		else
+			results.boots = { error = "boots not on belt" }
+			go("report")
+		end
+	elseif st.stage == "report" then
+		local nb, wb = results.no_boots or {}, results.boots or {}
+		local verdict
+		if nb.error or wb.error then
+			verdict = "ERROR " .. tostring(nb.error or wb.error)
+		elseif nb.damage < 0.02 then
+			verdict = "INCONCLUSIVE (no damage without boots: god mode or too low)"
+		elseif wb.damage < 0.002 then
+			verdict = "PASS"
+		else
+			verdict = "FAIL (boots did not cancel the landing hit)"
+		end
+		portal_mod.trace(string.format("AUTOTEST RESULT %s | no_boots dmg=%s speed=%s | boots dmg=%s speed=%s | cancelled_hits=%d",
+			verdict, tostring(nb.damage), tostring(nb.speed), tostring(wb.damage), tostring(wb.speed), pm_boots.cancelled_hits))
+		if verdict == "PASS" then
+			portal_mod.news("Ботинки длинного падения погасили удар полностью")
+		end
+		go("quit", 5000)  -- let the last message stay on screen for the recording
+	elseif st.stage == "quit" then
+		go("done")
+		portal_mod.finish_autotest()
+	end
+end
+
+-- Open ground near the actor (here, a ring around, or the nearest open AI vertex); nil if none.
+function open_ground()
+	return find_drop_point(0)
+end
