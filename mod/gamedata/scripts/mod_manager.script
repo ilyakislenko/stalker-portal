@@ -1,0 +1,159 @@
+-- My Mods: a "My Mods" button in the main menu opens a window that turns the user's mods on and off.
+-- The switches live in <app data>\mod_manager.ltx, outside the saves. A switched-off mod only stops acting: its items
+-- and config sections stay defined, so every save loads with any combination of switches.
+
+MODS = {
+	{ id = "portal_gun", title = "Portal Gun",
+	  text = "Aperture Science Handheld Portal Device: portals, walking and shooting through them. Off: the portals close and the gun does nothing." },
+	{ id = "long_fall_boots", title = "Long Fall Boots",
+	  text = "No fall damage while the boots are on the belt. Off: just an artefact." },
+	{ id = "ai_bot", title = "AI Bot", needs = "bot_core",
+	  text = "The bot_core script (A* pathfinding bot). Off: it is not updated." },
+}
+
+local state = nil -- id -> true/false
+
+local function settings_file()
+	return getFS():update_path("$app_data_root$", "mod_manager.ltx")
+end
+
+local function load_state()
+	state = {}
+	for _, m in ipairs(MODS) do
+		state[m.id] = true
+	end
+	local f = io.open(settings_file(), "r")
+	if not f then
+		return
+	end
+	for line in f:lines() do
+		local k, v = line:match("^%s*([%w_]+)%s*=%s*(%w+)")
+		if k and state[k] ~= nil then
+			state[k] = v == "1" or v == "on" or v == "true"
+		end
+	end
+	f:close()
+end
+
+local function save_state()
+	local f = io.open(settings_file(), "w")
+	if not f then
+		log1("! mod_manager: cannot write " .. settings_file())
+		return
+	end
+	f:write("; My Mods switches (main menu > My Mods): 1 on, 0 off. Not part of any save.\n")
+	for _, m in ipairs(MODS) do
+		f:write(string.format("%s = %d\n", m.id, state[m.id] and 1 or 0))
+	end
+	f:close()
+end
+
+-- Is a mod switched on? Unknown ids are on.
+function enabled(id)
+	if not state then
+		load_state()
+	end
+	return state[id] ~= false
+end
+
+function set_enabled(id, on)
+	if not state then
+		load_state()
+	end
+	state[id] = on and true or false
+	save_state()
+	apply()
+end
+
+-- A mod the window shows: ours always, others only when their script is in the game.
+local function present(m)
+	if not m.needs then
+		return true
+	end
+	local fs = getFS()
+	return fs:exist("$game_scripts$", m.needs .. ".script") ~= nil
+end
+
+-- What changes at once when a switch flips (the rest checks enabled() as it runs).
+function apply()
+	if not enabled("portal_gun") and pm_portals and db.actor then
+		pm_portals.remove(1)
+		pm_portals.remove(2)
+	end
+end
+
+------------------------------------------------------------------------------------------------------------------------
+class "mods_dialog" (CUIScriptWnd)
+
+function mods_dialog:__init(owner) super()
+	self.owner = owner
+	self:Init(0, 0, 1024, 768)
+	self:Enable(true)
+
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_mod_manager.xml")
+	xml:InitStatic("background", self)
+	self.dialog = xml:InitStatic("dialog", self)
+	xml:InitStatic("dialog:caption", self.dialog)
+
+	self.rows = {}
+	local n = 0
+	for _, m in ipairs(MODS) do
+		if present(m) and n < 4 then
+			n = n + 1
+			local check = xml:InitCheck("dialog:mod_" .. n, self.dialog)
+			check:SetText(m.title)
+			check:SetCheck(enabled(m.id))
+			self:Register(check, "mod_" .. n)
+			local desc = xml:InitStatic("dialog:desc_" .. n, self.dialog)
+			desc:SetText(m.text)
+			table.insert(self.rows, { mod = m, check = check })
+		end
+	end
+
+	local btn = xml:Init3tButton("dialog:btn_accept", self.dialog)
+	self:Register(btn, "btn_accept")
+	btn = xml:Init3tButton("dialog:btn_cancel", self.dialog)
+	self:Register(btn, "btn_cancel")
+	self:AddCallback("btn_accept", ui_events.BUTTON_CLICKED, self.on_accept, self)
+	self:AddCallback("btn_cancel", ui_events.BUTTON_CLICKED, self.on_cancel, self)
+end
+
+function mods_dialog:close()
+	self:GetHolder():start_stop_menu(self, true)
+	if self.owner then
+		self.owner:Show(true)
+	end
+end
+
+function mods_dialog:on_accept()
+	if not state then
+		load_state()
+	end
+	for _, row in ipairs(self.rows) do
+		state[row.mod.id] = row.check:GetCheck()
+	end
+	save_state()
+	apply()
+	self:close()
+end
+
+function mods_dialog:on_cancel()
+	self:close()
+end
+
+function mods_dialog:OnKeyboard(dik, keyboard_action)
+	CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED and dik == DIK_keys.DIK_ESCAPE then
+		self:on_cancel()
+	end
+	return true
+end
+
+-- From the main menu's "My Mods" button (owner: the main menu window, shown again when this one closes).
+function open(owner)
+	local dlg = mods_dialog(owner)
+	owner.mods_dlg = dlg -- keep it alive while it is on screen
+	owner:GetHolder():start_stop_menu(dlg, true)
+	owner:Show(false)
+end

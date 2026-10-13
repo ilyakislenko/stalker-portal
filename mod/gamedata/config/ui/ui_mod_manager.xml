@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<!-- My Mods window (scripts\mod_manager.script), styled like the options window (ui_mm_opt.xml). -->
+<window>
+	<background x="0" y="0" width="1024" height="768">
+		<texture>ui\ui_static_mm_back_03</texture>
+	</background>
+
+	<dialog x="415" y="168" width="548" height="461">
+		<texture>ui_menu_options_dlg</texture>
+
+		<caption x="45" y="9" width="378" height="33">
+			<text font="graffiti22" r="215" g="195" b="170">My Mods</text>
+		</caption>
+
+		<mod_1 x="55" y="68" width="440" height="21">
+			<text font="letterica16" r="215" g="195" b="170">mod</text>
+		</mod_1>
+		<desc_1 x="80" y="91" width="420" height="48" complex_mode="1">
+			<text font="letterica16" r="150" g="140" b="130"/>
+		</desc_1>
+
+		<mod_2 x="55" y="150" width="440" height="21">
+			<text font="letterica16" r="215" g="195" b="170">mod</text>
+		</mod_2>
+		<desc_2 x="80" y="173" width="420" height="48" complex_mode="1">
+			<text font="letterica16" r="150" g="140" b="130"/>
+		</desc_2>
+
+		<mod_3 x="55" y="232" width="440" height="21">
+			<text font="letterica16" r="215" g="195" b="170">mod</text>
+		</mod_3>
+		<desc_3 x="80" y="255" width="420" height="48" complex_mode="1">
+			<text font="letterica16" r="150" g="140" b="130"/>
+		</desc_3>
+
+		<mod_4 x="55" y="314" width="440" height="21">
+			<text font="letterica16" r="215" g="195" b="170">mod</text>
+		</mod_4>
+		<desc_4 x="80" y="337" width="420" height="48" complex_mode="1">
+			<text font="letterica16" r="150" g="140" b="130"/>
+		</desc_4>
+
+		<btn_accept x="219" y="429" width="157" height="48">
+			<text font="graffiti19" align="c">ui_mm_apply</text>
+			<texture>ui_button_main02</texture>
+			<text_color>
+				<e r="227" g="199" b="178"/> <t r="180" g="153" b="155"/> <d r="106" g="95" b="91"/> <h r="0" g="0" b="0"/>
+			</text_color>
+		</btn_accept>
+		<btn_cancel x="376" y="429" width="157" height="48">
+			<text font="graffiti19" align="c">ui_mm_cancel</text>
+			<texture>ui_button_main03</texture>
+			<text_color>
+				<e r="227" g="199" b="178"/> <t r="180" g="153" b="155"/> <d r="106" g="95" b="91"/> <h r="0" g="0" b="0"/>
+			</text_color>
+		</btn_cancel>
+	</dialog>
+</window>

@@ -35,8 +35,8 @@ change them at the top of `tools/*.py` and in `tools/build_ogsr.cmd`.
    `patch_e14.py`, applied in order (`python -I tools/engine_patches/patch_eN.py`).
 2. Portal 2 assets: `tools/p2_assets.py` (textures, sounds), `tools/p2_gun_ogf.py` (the gun model as OGF),
    `tools/make_icons.py` (inventory icons). Output goes to `_gen/` (not in git).
-3. Install into the game: `python -I tools/deploy.py` (backs up, installs `mod/gamedata` + `_gen/gamedata`, adds hooks
-   to `bind_stalker.script`). Remove with `--uninstall`.
+3. Install into the game: `python -I tools/deploy.py` (backs up, installs `mod/gamedata` + `_gen/gamedata`, adds
+   marked hook lines to `bind_stalker.script`, `ui_main_menu.script` and `ui_mm_main.xml`). Remove with `--uninstall`.
 
 Run `bin_portal\xrEngine.exe`.
 
@@ -52,9 +52,18 @@ The first time a save is played with the mod, the boots and the portal gun are p
 | LMB / RMB | blue / orange portal |
 | R | close the portals |
 
+## My Mods
+
+The main menu has a **My Mods** button (between Save and Options). It opens a window with a switch for each mod:
+Portal Gun, Long Fall Boots and, when its script is in the game, AI Bot (`bot_core`). Apply saves the switches to
+`mod_manager.ltx` in the game's app data folder, never into a save. A switched-off mod only stops acting (the portals
+close and the gun does nothing, the boots are an ordinary artefact, the bot is not updated); its items and config
+sections stay in the game, so every save loads with any combination of switches.
+
 ## Tests
 
 `tools/lab.py` runs the game on a separate lab profile with an autotest scenario and records a video
 (`python -I tools/deploy.py --autotest bar`, then `python -I tools/lab.py --engine bin_portal --save bar --record take`).
 Scenarios: `boots`, `portals`, `gun`, `bar` (shooting through portals), `npc` (NPCs and corpses through a floor
-portal), `walk` (walking into portals, standing in one, floor and wall portals).
+portal), `walk` (walking into portals, standing in one, floor and wall portals), `mods` (the My Mods window: switch
+the gun and the boots off and on).

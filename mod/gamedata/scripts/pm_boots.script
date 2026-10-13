@@ -32,6 +32,9 @@ function on_before_hit(h)
 	if h.hit_type ~= hit.strike then
 		return
 	end
+	if mod_manager and not mod_manager.enabled("long_fall_boots") then -- switched off in My Mods: just an artefact
+		return
+	end
 	local actor = db.actor
 	if not actor then
 		return

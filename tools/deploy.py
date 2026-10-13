@@ -1,19 +1,23 @@
 """Install / uninstall the mod into the user's S.T.A.L.K.E.R. SoC (OGSR) gamedata.
 
   python -I tools/deploy.py                 install (first run backs up the files it patches + saves)
-  python -I tools/deploy.py --autotest X    install with [portal_mod] autotest = X (boots|gallery|portals), autotest_quit = true
+  python -I tools/deploy.py --autotest X    install with [portal_mod] autotest = X (a lab scenario), autotest_quit = true
   python -I tools/deploy.py --uninstall     remove our files and hook lines
 
 What it touches in the game:
-  gamedata/config/portal_mod/*, gamedata/scripts/portal_mod.script, pm_*.script, gamedata/textures/ui/ui_icon_equipment_77.dds
-  gamedata/config/external.ltx       + one #include line
-  gamedata/scripts/bind_stalker.script + three hook lines (marked PORTAL_MOD HOOK), bytes otherwise untouched
+  gamedata/config/portal_mod/*, gamedata/scripts/portal_mod.script, pm_*.script, mod_manager.script,
+  gamedata/config/ui/ui_mod_manager.xml, gamedata/textures/ui/ui_icon_equipment_77.dds
+  gamedata/config/external.ltx          + one #include line
+  gamedata/scripts/bind_stalker.script  + hook lines (marked PORTAL_MOD HOOK): actor reinit/destroy/update, and the
+                                          "AI Bot" switch of My Mods inside the user's bot hook
+  gamedata/scripts/ui_main_menu.script  + the "My Mods" button callback (marked)
+  gamedata/config/ui/ui_mm_main.xml     + a "My Mods" button before every Options button (marked)
+  Bytes of these files are otherwise untouched; --uninstall removes the marked lines.
 Text files (.ltx .xml .script) are UTF-8 in the repo and written as cp1251, the game's encoding.
 """
 import argparse
 import re
 import shutil
-import sys
 import time
 from pathlib import Path
 
@@ -25,31 +29,47 @@ GD = GAME / "gamedata"
 SAVES = Path(r"C:\Users\User\docume~1\stalke~3\savedgames")
 BACKUP = ROOT / "_backup"
 MARK = b"-- PORTAL_MOD HOOK"
+XML_MARK = b"<!-- PORTAL_MOD HOOK -->"
 INCLUDE = b'#include "portal_mod\\portal_mod.ltx" ; PORTAL_MOD'
 TEXT = {".ltx", ".xml", ".script"}
 
-HOOKS = [  # (anchor, where, line)
-    (b"\tself.object:set_callback(callback.take_item_from_box, self.take_item_from_box, self)\r\n", "after",
-     b"\tif portal_mod then portal_mod.on_actor_reinit(self) end " + MARK + b"\r\n"),
-    (b"\tobject_binder.net_destroy(self)\r\n", "before",
-     b"\tif portal_mod then portal_mod.on_actor_destroy(self.object) end " + MARK + b"\r\n"),
-    (b"\t\tbot_core.on_game_update()\r\n\tend)\r\n", "after",
-     b"\tif portal_mod then portal_mod.on_update(delta) end " + MARK + b"\r\n"),
-]
+HOOKS = {  # file -> [(anchor, where, line, at every occurrence)]
+    "scripts/bind_stalker.script": [
+        (b"\tself.object:set_callback(callback.take_item_from_box, self.take_item_from_box, self)\r\n", "after",
+         b"\tif portal_mod then portal_mod.on_actor_reinit(self) end " + MARK + b"\r\n", False),
+        (b"\tobject_binder.net_destroy(self)\r\n", "before",
+         b"\tif portal_mod then portal_mod.on_actor_destroy(self.object) end " + MARK + b"\r\n", False),
+        (b"\t\tbot_core.on_game_update()\r\n\tend)\r\n", "after",
+         b"\tif portal_mod then portal_mod.on_update(delta) end " + MARK + b"\r\n", False),
+        (b"\t\tif not bot_core then return end\r\n", "after",
+         b'\t\tif mod_manager and not mod_manager.enabled("ai_bot") then return end ' + MARK + b"\r\n", False),
+    ],
+    "scripts/ui_main_menu.script": [
+        (b'\tself:AddCallback("btn_options", ui_events.BUTTON_CLICKED, self.OnButton_options_clicked, self)\r\n', "after",
+         b'\tself:AddCallback("btn_mods", ui_events.BUTTON_CLICKED, function() if mod_manager then mod_manager.open(self) end end, self) '
+         + MARK + b"\r\n", False),
+    ],
+    "config/ui/ui_mm_main.xml": [
+        (b'\t\t<btn name="btn_options"\t\tcaption="ui_mm_options_n" />\r\n', "before",
+         b'\t\t<btn name="btn_mods"\t\tcaption="My Mods" /> ' + XML_MARK + b"\r\n", True),
+    ],
+}
 
 
 def backup_once():
+    """Each game file we patch is saved before our first touch; the saves once, on the very first install."""
     orig = BACKUP / "original"
-    if orig.exists():
-        return
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    for rel in ["config/external.ltx", "scripts/bind_stalker.script"]:
+    first = not orig.exists()
+    for rel in ["config/external.ltx"] + list(HOOKS):
         dst = orig / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(GD / rel, dst)
-    if SAVES.exists():
+        if not dst.exists() and (GD / rel).exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(GD / rel, dst)
+            print(f"backup: {rel}")
+    if first and SAVES.exists():
+        stamp = time.strftime("%Y%m%d-%H%M%S")
         shutil.copytree(SAVES, BACKUP / f"savedgames-{stamp}")
-    print(f"backup: {orig} and savedgames-{stamp}")
+        print(f"backup: savedgames-{stamp}")
 
 
 def our_files():
@@ -76,20 +96,38 @@ def copy_files(autotest):
         print(f"  {rel}")
 
 
-def patch_bind_stalker():
-    path = GD / "scripts" / "bind_stalker.script"
-    b = path.read_bytes()
-    if MARK in b:
-        print("bind_stalker.script: hooks already present")
-        return
-    for anchor, where, line in HOOKS:
-        if b.count(anchor) != 1:
-            sys.exit(f"bind_stalker.script: anchor found {b.count(anchor)} times, expected 1: {anchor!r}")
-        i = b.index(anchor)
-        at = i + len(anchor) if where == "after" else i
-        b = b[:at] + line + b[at:]
-    path.write_bytes(b)
-    print("bind_stalker.script: 3 hook lines added")
+def patch_hooks():
+    """Our marked lines into the game's files; each line once (a re-run adds nothing)."""
+    for rel, hooks in HOOKS.items():
+        path = GD / rel
+        if not path.exists():
+            print(f"{rel}: not in the game, skipped")
+            continue
+        b = path.read_bytes()
+        added = 0
+        for anchor, where, line, every in hooks:
+            if line in b:
+                continue
+            n = b.count(anchor)
+            if n == 0 or (n != 1 and not every):
+                print(f"! {rel}: anchor found {n} times, hook skipped: {anchor!r}")
+                continue
+            out, pos = [], 0
+            while True:
+                i = b.find(anchor, pos)
+                if i < 0:
+                    break
+                at = i + len(anchor) if where == "after" else i
+                out.append(b[pos:at] + line)
+                pos = at + (len(anchor) if where == "before" else 0)
+                if where == "before":
+                    out[-1] += anchor
+                added += 1
+                if not every:
+                    break
+            b = b"".join(out) + b[pos:]
+        path.write_bytes(b)
+        print(f"{rel}: {added} hook line(s) added")
 
 
 def patch_external():
@@ -111,10 +149,12 @@ def uninstall():
     d = GD / "config" / "portal_mod"
     if d.exists() and not any(d.iterdir()):
         d.rmdir()
-    path = GD / "scripts" / "bind_stalker.script"
-    b = path.read_bytes()
-    b = b"".join(l for l in b.splitlines(keepends=True) if MARK not in l)
-    path.write_bytes(b)
+    for rel in HOOKS:
+        path = GD / rel
+        if path.exists():
+            b = path.read_bytes()
+            b = b"".join(l for l in b.splitlines(keepends=True) if MARK not in l and XML_MARK not in l)
+            path.write_bytes(b)
     path = GD / "config" / "external.ltx"
     b = path.read_bytes()
     b = b"".join(l for l in b.splitlines(keepends=True) if INCLUDE not in l)
@@ -124,7 +164,7 @@ def uninstall():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--autotest", metavar="SCENARIO", help="boots | gallery | portals")
+    ap.add_argument("--autotest", metavar="SCENARIO", help="a lab scenario: boots, portals, gun, bar, npc, walk, mods...")
     ap.add_argument("--uninstall", action="store_true")
     a = ap.parse_args()
     if a.uninstall:
@@ -133,7 +173,7 @@ def main():
     backup_once()
     copy_files(a.autotest)
     patch_external()
-    patch_bind_stalker()
+    patch_hooks()
 
 
 if __name__ == "__main__":

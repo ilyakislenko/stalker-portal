@@ -287,6 +287,9 @@ end
 
 -- Gun input: LMB blue, RMB orange, reload key closes both. Only with the gun in hands and no window open.
 function on_key_press(dik, bind)
+	if mod_manager and not mod_manager.enabled("portal_gun") then -- switched off in My Mods
+		return
+	end
 	local a = db.actor
 	if not a or level.main_input_receiver() ~= nil then
 		return
@@ -479,6 +482,13 @@ end
 
 function update(delta)
 	if not engine_ok() then
+		return
+	end
+	if mod_manager and not mod_manager.enabled("portal_gun") then -- switched off in My Mods: no portals at all
+		if portals[1] or portals[2] then
+			remove(1)
+			remove(2)
+		end
 		return
 	end
 	local now = time_global()

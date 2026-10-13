@@ -164,3 +164,14 @@ news lines (cp1251 renders fine). After a take, redeploy without `--autotest` (i
   left invisible portal holes behind. Dev keys moved to F8 gun, F9 boots, F10 drop test. The kit (boots + gun) is now
   put into the inventory once per game (actor pstor flag `portal_mod_kit`), not in lab scenarios. Checked in the lab
   in play mode: "kit issued", no script errors.
+- User: "a main menu button that opens a menu with my mods, to switch them on and off without breaking saves".
+  `mod_manager.script` + `config/ui/ui_mod_manager.xml` (styled like the options window): Portal Gun, Long Fall
+  Boots and AI Bot (shown only when `bot_core.script` exists). The switches are in `$app_data_root$\mod_manager.ltx`
+  (plain `id = 1/0` lines written with Lua `io`), never in a save; a switched-off mod keeps its items and sections
+  and only stops acting (pm_portals closes the portals and ignores the keys, pm_boots lets fall damage through,
+  the user's bot hook in bind_stalker returns early), so any save loads with any switches. deploy.py adds marked
+  lines: the button before every `btn_options` in `ui_mm_main.xml` (5 layouts), its callback in
+  `ui_main_menu.script`, the bot gate in `bind_stalker.script`; each line once, `--uninstall` drops them.
+  OGSR's menu cursor follows the Windows cursor but only re-reads it on a DirectInput move, so a test click is
+  "move x y", "rel 1 0", then "mdown"/"mup". Lab scenario `mods`: PASS (portals closed on Apply, the file written,
+  switches back on); clicked in the real main menu: the window opens, Cancel returns to the menu, no log errors.

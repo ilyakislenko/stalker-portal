@@ -1,0 +1,89 @@
+-- Lab scenario "mods": the My Mods window (mod_manager.script). Opens it over the game, switches the portal gun and
+-- the boots off, applies, checks that the open portals closed and the switches reached the settings file, then
+-- switches everything back on. Logs "MODSTEST" lines.
+
+local st = nil
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+local function report(verdict)
+	portal_mod.trace("AUTOTEST RESULT " .. verdict)
+	go("done")
+	portal_mod.finish_autotest()
+end
+
+local function settings_text()
+	local f = io.open(getFS():update_path("$app_data_root$", "mod_manager.ltx"), "r")
+	if not f then
+		return "(no file)"
+	end
+	local t = f:read("*a")
+	f:close()
+	return (t:gsub("\r?\n", " | "))
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	if not st then
+		st = {}
+		go("start", 4000)
+		portal_mod.trace("AUTOTEST armed (mods)")
+		return
+	end
+	if time_global() < st.t then
+		return
+	end
+
+	if st.stage == "start" then
+		mod_manager.set_enabled("portal_gun", true)
+		mod_manager.set_enabled("long_fall_boots", true)
+		-- two portals in front of the player
+		local dir = device().cam_dir
+		dir = vector():set(dir.x, 0, dir.z):normalize()
+		local p = a:position()
+		local up = vector():set(0, 1, 0)
+		pm_portals.place(1, vector():set(p.x + dir.x * 4 - dir.z * 1.5, p.y + 1.1, p.z + dir.z * 4 + dir.x * 1.5), vector():set(dir):invert(), up)
+		pm_portals.place(2, vector():set(p.x + dir.x * 4 + dir.z * 1.5, p.y + 1.1, p.z + dir.z * 4 - dir.x * 1.5), vector():set(dir):invert(), up)
+		portal_mod.news("My Mods: portals open, the window comes next")
+		go("open", 2500)
+	elseif st.stage == "open" then
+		st.dlg = mod_manager.mods_dialog(nil)
+		level.start_stop_menu(st.dlg, true)
+		local titles = {}
+		for _, row in ipairs(st.dlg.rows) do
+			table.insert(titles, string.format("%s=%s", row.mod.id, tostring(row.check:GetCheck())))
+		end
+		portal_mod.trace("MODSTEST window open, rows: " .. table.concat(titles, ", "))
+		go("untick", 2500)
+	elseif st.stage == "untick" then
+		for _, row in ipairs(st.dlg.rows) do
+			if row.mod.id == "portal_gun" or row.mod.id == "long_fall_boots" then
+				row.check:SetCheck(false)
+			end
+		end
+		go("accept", 1500)
+	elseif st.stage == "accept" then
+		st.dlg:on_accept()
+		go("check_off", 1000)
+	elseif st.stage == "check_off" then
+		st.off_ok = not mod_manager.enabled("portal_gun") and not mod_manager.enabled("long_fall_boots")
+			and pm_portals.portals[1] == nil and pm_portals.portals[2] == nil
+		portal_mod.trace(string.format("MODSTEST after Apply: portal_gun=%s boots=%s, portals %s; file: %s",
+			tostring(mod_manager.enabled("portal_gun")), tostring(mod_manager.enabled("long_fall_boots")),
+			(pm_portals.portals[1] or pm_portals.portals[2]) and "still open" or "closed", settings_text()))
+		mod_manager.set_enabled("portal_gun", true)
+		mod_manager.set_enabled("long_fall_boots", true)
+		go("check_on", 500)
+	elseif st.stage == "check_on" then
+		local on_ok = mod_manager.enabled("portal_gun") and mod_manager.enabled("long_fall_boots")
+		portal_mod.trace("MODSTEST back on; file: " .. settings_text())
+		report(string.format("%s | switched off and closed the portals: %s, back on: %s", st.off_ok and on_ok and "PASS" or "FAIL",
+			tostring(st.off_ok), tostring(on_ok)))
+	end
+end

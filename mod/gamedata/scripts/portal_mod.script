@@ -64,7 +64,7 @@ function on_actor_destroy(actor)
 	actor:set_callback(callback.on_key_press, nil)
 end
 
-local SCENARIOS = { boots = "pm_test", gallery = "pm_gallery", portals = "pm_portal_test", gun = "pm_gun_test", bar = "pm_bar_test", npc = "pm_npc_test", walk = "pm_walk_test" }
+local SCENARIOS = { boots = "pm_test", gallery = "pm_gallery", portals = "pm_portal_test", gun = "pm_gun_test", bar = "pm_bar_test", npc = "pm_npc_test", walk = "pm_walk_test", mods = "pm_mods_test" }
 
 -- The mod's kit (long fall boots + portal gun) goes into the inventory once per game: the first time a save is played
 -- with the mod. A flag in the actor's pstor (saved by bind_stalker) remembers it. Not in lab scenarios.
