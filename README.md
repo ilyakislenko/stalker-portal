@@ -42,10 +42,13 @@ Run `bin_portal\xrEngine.exe`.
 
 ## Controls
 
+The first time a save is played with the mod, the boots and the portal gun are put into the inventory.
+
+
 | Key | Action |
 |---|---|
-| F8 | give the portal gun (dev mode) |
-| F6 | give the long fall boots |
+| F8 | give the portal gun again (dev mode) |
+| F9 | give the long fall boots again (dev mode) |
 | LMB / RMB | blue / orange portal |
 | R | close the portals |
 

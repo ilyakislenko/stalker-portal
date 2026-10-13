@@ -159,3 +159,8 @@ news lines (cp1251 renders fine). After a take, redeploy without `--autotest` (i
   ~CLevel clears them; Lua clears them too when the actor binder reinits. hole() applies only while the moving body
   is in front of the portal's opening (not to anything brushing past), and ground at/behind a wall portal counts on
   slopes up to 45 degrees unless it leans out of the wall (a board's edge). Walk test PASS twice after it.
+- User: "the boots are missing". In SoC F6/F7 are quick save/load (user.ltx `bind quick_save kF6`, `quick_load kF7`):
+  the dev key F6 for the boots never reached us, and F7 (our drop test) quick-loaded the game - with the E14 bug that
+  left invisible portal holes behind. Dev keys moved to F8 gun, F9 boots, F10 drop test. The kit (boots + gun) is now
+  put into the inventory once per game (actor pstor flag `portal_mod_kit`), not in lab scenarios. Checked in the lab
+  in play mode: "kit issued", no script errors.

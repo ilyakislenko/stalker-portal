@@ -49,6 +49,7 @@ function on_actor_reinit(binder)
 	actor:set_callback(callback.entity_alive_before_hit, pm_boots.on_before_hit)
 	actor:set_callback(callback.on_actor_land, pm_boots.on_land)
 	actor:set_callback(callback.on_key_press, on_key_press)
+	kit_checked = false
 	-- a new game or a loaded save starts with no portals; the engine must not keep the ones from before
 	if level.portal_clear then
 		level.portal_clear(0)
@@ -65,8 +66,31 @@ end
 
 local SCENARIOS = { boots = "pm_test", gallery = "pm_gallery", portals = "pm_portal_test", gun = "pm_gun_test", bar = "pm_bar_test", npc = "pm_npc_test", walk = "pm_walk_test" }
 
+-- The mod's kit (long fall boots + portal gun) goes into the inventory once per game: the first time a save is played
+-- with the mod. A flag in the actor's pstor (saved by bind_stalker) remembers it. Not in lab scenarios.
+local kit_checked = false
+local function issue_kit()
+	if kit_checked or not db.actor or not db.storage[db.actor:id()] then
+		return
+	end
+	kit_checked = true
+	if setting("autotest") or xr_logic.pstor_retrieve(db.actor, "portal_mod_kit", false) then
+		return
+	end
+	xr_logic.pstor_store(db.actor, "portal_mod_kit", true)
+	if not db.actor:object(pm_boots.SECTION) then
+		give(pm_boots.SECTION)
+	end
+	if not db.actor:object(pm_portals.GUN) then
+		give(pm_portals.GUN)
+	end
+	news("Aperture Science kit: Long Fall Boots (put them on your belt) and the Portal Gun (LMB blue, RMB orange, R closes). F9 / F8 give them again.")
+	trace("kit issued")
+end
+
 function on_update(delta)
 	pm_portals.update(delta)
+	issue_kit()
 	local scenario = setting("autotest")
 	if scenario then
 		_G[SCENARIOS[scenario] or "pm_test"].update()
@@ -89,10 +113,10 @@ function on_key_press(dik, bind)
 	if dik == DIK_keys.DIK_F8 then
 		give(pm_portals.GUN)
 		news("Portal gun received. LMB: blue portal, RMB: orange, R: close the portals.")
-	elseif dik == DIK_keys.DIK_F6 then
+	elseif dik == DIK_keys.DIK_F9 then -- (F6/F7 are quick save/load in SoC)
 		give(pm_boots.SECTION)
 		news("Long fall boots received. Put them on your belt.")
-	elseif dik == DIK_keys.DIK_F7 then
+	elseif dik == DIK_keys.DIK_F10 then
 		pm_test.drop(12)
 	end
 end
