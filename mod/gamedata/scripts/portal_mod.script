@@ -49,6 +49,11 @@ function on_actor_reinit(binder)
 	actor:set_callback(callback.entity_alive_before_hit, pm_boots.on_before_hit)
 	actor:set_callback(callback.on_actor_land, pm_boots.on_land)
 	actor:set_callback(callback.on_key_press, on_key_press)
+	-- a new game or a loaded save starts with no portals; the engine must not keep the ones from before
+	if level.portal_clear then
+		level.portal_clear(0)
+		level.portal_clear(1)
+	end
 	trace("hooked: dev=" .. tostring(setting("dev")) .. " autotest=" .. tostring(setting("autotest")))
 end
 

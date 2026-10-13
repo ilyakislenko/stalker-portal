@@ -32,7 +32,7 @@ change them at the top of `tools/*.py` and in `tools/build_ogsr.cmd`.
    portal patches and two build fixes for MSVC 17.14). Build it with `tools\build_ogsr.cmd` (or Visual Studio, x64
    Release) and copy `bin_x64\xrEngine.exe` into the game folder as `bin_portal\xrEngine.exe` (the stock `bin_x64`
    stays untouched). The same changes as scripts for any OGSR checkout: `tools/engine_patches/patch_e1.py` …
-   `patch_e13.py`, applied in order (`python -I tools/engine_patches/patch_eN.py`).
+   `patch_e14.py`, applied in order (`python -I tools/engine_patches/patch_eN.py`).
 2. Portal 2 assets: `tools/p2_assets.py` (textures, sounds), `tools/p2_gun_ogf.py` (the gun model as OGF),
    `tools/make_icons.py` (inventory icons). Output goes to `_gen/` (not in git).
 3. Install into the game: `python -I tools/deploy.py` (backs up, installs `mod/gamedata` + `_gen/gamedata`, adds hooks

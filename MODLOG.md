@@ -153,3 +153,9 @@ news lines (cp1251 renders fine). After a take, redeploy without `--autotest` (i
   Test gotchas: a camera yaw left at -2*pi makes the body turn a full circle and walk sideways; zero leftover
   velocity before a drop. **Take `_videos/walk_portals_01.mp4`: PASS** (wall->wall exact, standing half in the
   portal, stepping through, floor->wall 13.5 m/s, wall->floor and back).
+- User played and hit "falling through and getting stuck while walking, not even in a portal". E14
+  (`patch_e14.py`): the engine never cleared its portals when a level went away (only Lua did), so after loading a
+  save or changing level the old portals stayed - drawn, and holes in the collision at their old coordinates.
+  ~CLevel clears them; Lua clears them too when the actor binder reinits. hole() applies only while the moving body
+  is in front of the portal's opening (not to anything brushing past), and ground at/behind a wall portal counts on
+  slopes up to 45 degrees unless it leans out of the wall (a board's edge). Walk test PASS twice after it.
