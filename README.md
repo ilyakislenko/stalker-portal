@@ -6,6 +6,10 @@ Portal 2's mechanics into the Zone.
 - **Long Fall Boots** (a belt artefact): no fall damage.
 - **Portal Gun** with Portal 2's viewmodel and sounds: blue and orange portals, a live view through them (a second
   render pass), portals that lie flat on the surface they hit.
+- **Walking through portals like in Portal 2**: the surface inside a portal is a hole for the body, so you walk into a
+  wall portal, can stand half inside it and fall into a floor portal; you are moved the moment your eye crosses the
+  portal, so between two wall portals there is no jump at all. The view turns with the portals and its roll
+  straightens out, as in Portal 2.
 - **Everything goes through portals**: the player (momentum kept), bullets, RPG rockets, grenades (with Portal 2 style
   funnelling), physics objects, NPCs, mutants and corpses. Whatever stands on a floor portal falls in.
 
@@ -23,7 +27,7 @@ change them at the top of `tools/*.py` and in `tools/build_ogsr.cmd`.
 
 ## Building
 
-1. Engine: in an OGSR Engine checkout apply `tools/engine_patches/patch_e1.py` … `patch_e9.py` in order
+1. Engine: in an OGSR Engine checkout apply `tools/engine_patches/patch_e1.py` … `patch_e13.py` in order
    (`python -I tools/engine_patches/patch_eN.py`), build with `tools\build_ogsr.cmd` and copy `bin_x64\xrEngine.exe`
    into the game folder as `bin_portal\xrEngine.exe` (the stock `bin_x64` stays untouched). MSVC 17.14 also needs two
    build fixes in the engine: a dependent `static_assert` and the quad index buffer built at runtime instead of
@@ -49,4 +53,4 @@ Run `bin_portal\xrEngine.exe`.
 `tools/lab.py` runs the game on a separate lab profile with an autotest scenario and records a video
 (`python -I tools/deploy.py --autotest bar`, then `python -I tools/lab.py --engine bin_portal --save bar --record take`).
 Scenarios: `boots`, `portals`, `gun`, `bar` (shooting through portals), `npc` (NPCs and corpses through a floor
-portal).
+portal), `walk` (walking into portals, standing in one, floor and wall portals).

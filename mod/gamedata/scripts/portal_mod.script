@@ -58,7 +58,7 @@ function on_actor_destroy(actor)
 	actor:set_callback(callback.on_key_press, nil)
 end
 
-local SCENARIOS = { boots = "pm_test", gallery = "pm_gallery", portals = "pm_portal_test", gun = "pm_gun_test", bar = "pm_bar_test", npc = "pm_npc_test" }
+local SCENARIOS = { boots = "pm_test", gallery = "pm_gallery", portals = "pm_portal_test", gun = "pm_gun_test", bar = "pm_bar_test", npc = "pm_npc_test", walk = "pm_walk_test" }
 
 function on_update(delta)
 	pm_portals.update(delta)

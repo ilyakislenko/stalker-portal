@@ -126,3 +126,30 @@ news lines (cp1251 renders fine). After a take, redeploy without `--autotest` (i
   **Take `_videos/bar_portals_04.mp4`: PASS** - AK burst through the portal 2 kills, RPG (`wpn_rpg7_missile went
   through portal 0 at 18.3 m/s`) 1 kill, grenade (planned 12.5 m/s, through at 11.9 m/s) 2 kills.
   Engine commits on `portal-mod`: E4/E5/E7 `2b70282`, E6 `50b79a1`.
+- NPCs and corpses (E8/E9): living NPCs/monsters are moved on the main thread like script set_npc_position plus an
+  enabled physics character (a sleeping one left them hanging in the air); corpses go in the physics step, any ragdoll
+  element over a floor portal makes it fall in.
+- User: "walk in and out of the portal, stand in it, the view turns with the portal (like Portal 2)". Player travel
+  rewritten: the surface inside a linked portal is a hole for characters, the move happens when the eye crosses the
+  portal's plane, wall-to-wall it is exact (no jump), the view is mapped and its roll straightened over 0.5 s
+  (`level.portal_view_roll`). Engine E10-E13, each found by logging contacts in the lab:
+  * E10 `hole()`: drop character contacts with static geometry at/behind the surface inside the portal's rectangle
+    (not the oval: its narrow bottom caught the feet; 0.2 m below a wall portal too), keep only ground right under the
+    feet (normal within ~7 deg of the portal's up, <= 5 cm above the feet: a fence's bottom rail or a board's slanted
+    lower edge is not ground). The same for the first-person camera's collision box and the activation box of
+    teleports. A second portal quad 0.5 m behind the surface covers the near plane, drawn only when the camera is
+    within 0.6 m (else it peeked over fences). ForceTransform resets the stair-step camera smoothing.
+  * E11: no infinite friction (`pushing_neg`) for bodies inside a hole zone (it glued the player to the ground);
+    the camera box ignores static geometry inside the zone; `ValidateWalkOnMesh` (the controller's own triangle query
+    ahead: wall stop / step climb) treats the hole as an opening (its climb force follows a stale wall normal and
+    shoved the player sideways along the wall).
+  * E12: `level.portal_set_actor_position` places the player with no CollisionCorrectObjPos (its activation box
+    shoved a body half inside the exit wall up to 0.5 m forward).
+  * E13: the tri-list collider reports a long triangle's far vertex as the contact point (fence boards: 3.6 and 19 m
+    away); hole() now uses the body's centre projected onto the contact plane when the point is > 1.5 m off. This was
+    the "bumps into the fence boards" the user saw.
+  Portal gun: walls accept 6 cm of bumps (floors 25 cm), denser rays catch rails and gaps, rays see physics objects
+  too, a floor portal needs 2 m of free space above it (rays up and across: a fence over it is vertical planes).
+  Test gotchas: a camera yaw left at -2*pi makes the body turn a full circle and walk sideways; zero leftover
+  velocity before a drop. **Take `_videos/walk_portals_01.mp4`: PASS** (wall->wall exact, standing half in the
+  portal, stepping through, floor->wall 13.5 m/s, wall->floor and back).

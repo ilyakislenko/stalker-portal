@@ -1,0 +1,456 @@
+-- Lab scenario "walk": the player through portals, Portal 2 style (portal-mod engine E10: the surface inside a linked
+-- portal is a hole for the body; the move happens when the eye crosses the portal's plane).
+--   1. walk into the blue wall portal, out of the orange one
+--   2. turn round, step into the orange portal and stop half inside it, look around; step through, turn round and
+--      look back through the portal
+--   3. blue portal on the ground: drop into it looking down, come out of the orange wall portal looking ahead
+--   4. walk into the orange wall portal, pop up out of the floor portal
+-- Recorded on Cordon (save "all", the yard between two village houses). Logs "WALKTEST" lines.
+
+local st = nil
+local DOWN = vector():set(0, -1, 0)
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+local function ground_at(p)
+	local top = vector():set(p.x, p.y + 30, p.z)
+	local rq = level.ray_query(top, DOWN, 80, rq_target.rqtStatic, db.actor)
+	return rq.result and (top.y - rq.range) or p.y
+end
+
+local function report(verdict)
+	portal_mod.trace(string.format("AUTOTEST RESULT %s | travels=%d", verdict, pm_portals.travels))
+	go("done")
+	portal_mod.finish_autotest()
+end
+
+-- nothing sticking out of the wall where a person walks into a portal: rays at 0.3..1.9 m above the ground, 0.4 m
+-- to either side, all hit the wall's plane
+local function flat_wall(hit, n, ground)
+	local back = vector():set(n):invert()
+	local side = vector():crossproduct(vector():set(0, 1, 0), n):normalize()
+	for _, hgt in ipairs({ 0.3, 1.0, 1.6, 1.9, 2.2 }) do
+		for _, sx in ipairs({ -0.55, 0, 0.55 }) do
+			local from = vector():set(hit):add(vector():set(n):mul(1.0)):add(vector():set(side):mul(sx))
+			from.y = ground + hgt
+			local rq = level.ray_query(from, back, 2.0, rq_target.rqtBoth, db.actor)
+			if not rq.result or math.abs(rq.range - 1.0) > 0.08 then
+				return false
+			end
+			-- and nothing overhead in front of it up to 2.4 m
+			local up = level.ray_query(from, vector():set(0, 1, 0), 2.4 - hgt, rq_target.rqtStatic, db.actor)
+			if up.result then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+-- walls at eye height with flat ground in front, 4..25 m away
+local function find_walls()
+	local eye = device().cam_pos
+	local walls = {}
+	for k = 0, 23 do
+		local a = k * math.pi / 12
+		local dir = vector():set(math.sin(a), 0, math.cos(a))
+		local rq = level.ray_query(eye, dir, 30, rq_target.rqtStatic, db.actor)
+		if rq.result and rq.range > 4 and rq.range < 25 then
+			local n = level.ray_query_normal(eye, dir, 30)
+			if math.abs(n.y) < 0.3 and n:dotproduct(dir) < -0.7 then
+				local hit = vector():set(eye):add(vector():set(dir):mul(rq.range))
+				local g_near = ground_at(vector():set(hit):add(vector():set(n):mul(0.7)))
+				local g_far = ground_at(vector():set(hit):add(vector():set(n):mul(3)))
+				local h = hit.y - g_near
+				if math.abs(g_near - g_far) < 0.4 and h > 0.8 and h < 2.5 and flat_wall(hit, n, g_near) then
+					table.insert(walls, { dir = dir, dist = rq.range, n = n })
+				end
+			end
+		end
+	end
+	return walls
+end
+
+-- nothing (walls, fences) within r metres around a ground point, at knee and head height
+function open_around(p, r)
+	for _, hgt in ipairs({ 0.5, 1.6 }) do
+		local from = vector():set(p.x, p.y + hgt, p.z)
+		for k = 0, 7 do
+			local a = k * math.pi / 4
+			local rq = level.ray_query(from, vector():set(math.sin(a), 0, math.cos(a)), r, rq_target.rqtBoth, db.actor)
+			if rq.result then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+-- smooth camera turns: yaw/pitch from the current view to a target over ms
+local function turn(yaw, pitch, ms)
+	local cam = actor_camera(0)
+	st.anim = { y0 = cam.yaw, p0 = cam.pitch, y1 = yaw, p1 = pitch or cam.pitch, t0 = time_global(), ms = ms }
+	-- shortest way round
+	while st.anim.y1 - st.anim.y0 > math.pi do
+		st.anim.y1 = st.anim.y1 - 2 * math.pi
+	end
+	while st.anim.y1 - st.anim.y0 < -math.pi do
+		st.anim.y1 = st.anim.y1 + 2 * math.pi
+	end
+end
+
+local function animate()
+	local an = st.anim
+	if not an then
+		return
+	end
+	local k = math.min(1, (time_global() - an.t0) / an.ms)
+	k = k * k * (3 - 2 * k)
+	local cam = actor_camera(0)
+	cam.yaw = an.y0 + (an.y1 - an.y0) * k
+	cam.pitch = an.p0 + (an.p1 - an.p0) * k
+	if k >= 1 then
+		-- keep the yaw in (-pi, pi]: from -2*pi the body turns a full circle to it and walks sideways meanwhile
+		local y = cam.yaw
+		while y > math.pi do
+			y = y - 2 * math.pi
+		end
+		while y <= -math.pi do
+			y = y + 2 * math.pi
+		end
+		cam.yaw = y
+		st.anim = nil
+	end
+end
+
+local function yaw_of(dir)
+	return -dir:getH()
+end
+
+local function face(dir, ms)
+	turn(yaw_of(dir), -dir:getP(), ms or 1)
+end
+
+-- forward key held (real input) while `walking`
+local function walk(on)
+	if on and not st.walk_dik then
+		st.walk_dik = bind_to_dik(key_bindings.kFWD)
+		level.send_event_key_press(st.walk_dik)
+	elseif not on and st.walk_dik then
+		level.send_event_key_release(st.walk_dik)
+		st.walk_dik = nil
+	end
+end
+
+-- the eye's distance in front of portal i's plane (negative: behind it)
+local function eye_z(i)
+	local P = pm_portals.portals[i]
+	return vector():sub(device().cam_pos, P.pos):dotproduct(P.n)
+end
+
+local function feet_z(i)
+	local P = pm_portals.portals[i]
+	return vector():sub(db.actor:position(), P.pos):dotproduct(P.n)
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	if not st then
+		st = { tries = 0 }
+		go("move", 4000)
+		portal_mod.trace("AUTOTEST armed (walk) engine=" .. tostring(pm_portals.engine_ok()))
+		return
+	end
+	animate()
+	if st.walk_dik then
+		level.send_event_key_hold(st.walk_dik) -- movement keys are polled as "held" every frame
+		if st.diag and time_global() >= (st.next_diag or 0) then
+			st.next_diag = time_global() + 250
+			local P = pm_portals.portals[st.diag]
+			local d = vector():sub(a:position(), P.pos)
+			portal_mod.trace(string.format("WALKTEST %s: portal %d eye z %.2f, feet z %.2f, x %.2f, y %.2f, v (%.1f, %.1f, %.1f), view.in %.2f, body.in %.2f, yaw %.2f",
+				st.stage, st.diag, eye_z(st.diag), feet_z(st.diag), d:dotproduct(P.right), d:dotproduct(P.up), level.actor_velocity().x,
+				level.actor_velocity().y, level.actor_velocity().z, -device().cam_dir:dotproduct(P.n), -a:direction():dotproduct(P.n), actor_camera(0).yaw))
+		end
+	end
+	if time_global() < st.t then
+		return
+	end
+
+	if st.stage == "move" then
+		if not pm_portals.engine_ok() then
+			return report("ERROR stock engine (use bin_portal)")
+		end
+		pm_bar_test.clear_monsters()
+		get_console():execute("g_god on") -- lab only
+		local g
+		if level.name() == "l01_escape" then
+			g = vector():set(-221.5, -18.5, -140.0)
+			g.y = ground_at(g)
+		else
+			g = pm_test.open_ground()
+		end
+		if g then
+			a:set_actor_position(g, false)
+		end
+		portal_mod.give(pm_portals.GUN)
+		go("arm", 1200)
+	elseif st.stage == "arm" then
+		local gun = a:object(pm_portals.GUN)
+		if not gun then
+			return report("ERROR the gun never appeared in the inventory")
+		end
+		local held = a:item_in_slot(2)
+		if held and held:id() ~= gun:id() then
+			a:move_to_ruck(held)
+		end
+		a:move_to_slot(gun, false)
+		a:activate_slot(2)
+		go("scan", 1500)
+	elseif st.stage == "scan" then
+		st.walls = find_walls()
+		table.sort(st.walls, function(x, y) return x.dist < y.dist end)
+		st.k = 0
+		portal_mod.trace(string.format("WALKTEST %d wall directions found", #st.walls))
+		go("aim")
+	elseif st.stage == "aim" then
+		st.k = st.k + 1
+		local w = st.walls[st.k]
+		while w and st.blue_dir and w.dir:dotproduct(st.blue_dir) > 0.5 do
+			st.k = st.k + 1
+			w = st.walls[st.k]
+		end
+		if not w then
+			return report("ERROR no two portal-able walls found")
+		end
+		st.cur = w
+		face(w.dir, 500)
+		go("shoot", 900)
+	elseif st.stage == "shoot" then
+		local i = st.blue_dir and 2 or 1
+		local ok = pm_portals.shoot(i)
+		if ok then
+			-- standing on the ground, so it can be walked into
+			local p = pm_portals.portals[i]
+			-- the highest ground right in front of the wall (a plinth or raised ground at its foot counts)
+			local g = -1000
+			for _, k in ipairs({ 0.15, 0.3, 0.6 }) do
+				g = math.max(g, ground_at(vector():set(p.pos):add(vector():set(p.n):mul(k))))
+			end
+			local bottom = g + pm_portals.H / 2 + 0.03
+			if math.abs(p.pos.y - bottom) > 0.02 then
+				pm_portals.place(i, vector():set(p.pos.x, bottom, p.pos.z), p.n, p.up)
+			end
+		end
+		if ok and i == 1 then
+			st.blue_dir = st.cur.dir
+			go("aim", 1000)
+		elseif ok then
+			go("approach", 1200)
+		else
+			go("aim", 600)
+		end
+
+	-- 1: walk into blue, out of orange
+	elseif st.stage == "approach" then
+		local B = pm_portals.portals[1]
+		local start = vector():set(B.pos):add(vector():set(B.n):mul(3.5))
+		start.y = ground_at(start)
+		a:set_actor_position(start, false)
+		face(vector():set(B.n):invert(), 1)
+		portal_mod.news("Into the blue portal")
+		st.travels0 = pm_portals.travels
+		go("walk1", 1000)
+	elseif st.stage == "walk1" then
+		st.diag = 1
+		walk(true)
+		st.until_t = time_global() + 5000
+		go("walking1")
+	elseif st.stage == "walking1" then
+		if time_global() >= (st.next_diag or 0) then
+			st.next_diag = time_global() + 300
+			local B = pm_portals.portals[1]
+			local d = vector():sub(a:position(), B.pos)
+			portal_mod.trace(string.format("WALKTEST 1: eye z %.2f, feet z %.2f, x %.2f, y %.2f, speed %.1f, cam-feet (%.2f, %.2f)", eye_z(1), feet_z(1),
+				d:dotproduct(B.right), d:dotproduct(B.up), level.actor_velocity():magnitude(),
+				vector():sub(device().cam_pos, a:position()):dotproduct(B.n), device().cam_pos.y - a:position().y))
+		end
+		if pm_portals.travels > st.travels0 then
+			portal_mod.trace(string.format("WALKTEST 1: through; feet %.2f m in front of orange", feet_z(2)))
+			st.after = time_global() + 900
+			go("walking1_out")
+		elseif time_global() > st.until_t then
+			walk(false)
+			return report(string.format("FAIL walked at the blue portal but did not get through (eye %.2f m in front)", eye_z(1)))
+		end
+	elseif st.stage == "walking1_out" then
+		if time_global() > st.after then
+			walk(false)
+			portal_mod.trace(string.format("WALKTEST 1: walked out, %.2f m in front of orange", feet_z(2)))
+			go("turn2", 800)
+		end
+
+	-- 2: back into orange, stop half inside it
+	elseif st.stage == "turn2" then
+		-- straight in front of the orange portal's middle (the walk out drifts sideways), turn round to it
+		local O = pm_portals.portals[2]
+		local p = vector():set(O.pos):add(vector():set(O.n):mul(2.5))
+		p.y = ground_at(p)
+		a:set_actor_position(p, false)
+		face(vector():set(O.n):invert(), 1200)
+		portal_mod.news("Standing in the portal")
+		go("walk2", 1500)
+	elseif st.stage == "walk2" then
+		st.diag = 2
+		st.travels0 = pm_portals.travels
+		walk(true)
+		st.until_t = time_global() + 4000
+		go("walking2")
+	elseif st.stage == "walking2" then
+		if eye_z(2) < 0.5 or time_global() > st.until_t then
+			walk(false) -- the body slides on a little: it stops with the eye just in front of the portal
+			go("halfway", 900)
+		end
+	elseif st.stage == "halfway" then
+		portal_mod.trace(string.format("WALKTEST 2: standing in the orange portal: eye %.2f m in front, feet %.2f (negative = inside the wall), travels %d",
+			eye_z(2), feet_z(2), pm_portals.travels - st.travels0))
+		st.half_ok = feet_z(2) < 0.3 and pm_portals.travels == st.travels0
+		local cam = actor_camera(0)
+		st.yaw_c = cam.yaw
+		turn(st.yaw_c + 1.0, nil, 900)
+		go("look_l", 1400)
+	elseif st.stage == "look_l" then
+		turn(st.yaw_c - 1.0, nil, 1500)
+		go("look_r", 1900)
+	elseif st.stage == "look_r" then
+		turn(st.yaw_c, nil, 900)
+		go("step2", 1300)
+	elseif st.stage == "step2" then
+		st.diag = 2
+		walk(true)
+		st.until_t = time_global() + 2500
+		go("stepping2")
+	elseif st.stage == "stepping2" then
+		if pm_portals.travels > st.travels0 then
+			walk(false)
+			portal_mod.trace(string.format("WALKTEST 2: stepped through, feet %.2f m in front of blue", feet_z(1)))
+			go("look_back", 900)
+		elseif time_global() > st.until_t then
+			walk(false)
+			return report("FAIL stood in the orange portal but could not step through")
+		end
+	elseif st.stage == "look_back" then
+		face(vector():set(pm_portals.portals[1].n):invert(), 1500)
+		portal_mod.news("Looking back through the portal")
+		go("floor", 3200)
+
+	-- 3: blue on the ground, drop in looking down
+	elseif st.stage == "floor" then
+		local cam = device().cam_pos
+		local B = pm_portals.portals[1]
+		st.grounds = {}
+		for _, d in ipairs({ 3, 4, 5, 6, 7, 8 }) do
+			for k = 0, 15 do
+				local ang = k * math.pi / 8
+				local top = vector():set(cam.x + d * math.sin(ang), cam.y + 20, cam.z + d * math.cos(ang))
+				local rq = level.ray_query(top, DOWN, 60, rq_target.rqtStatic, db.actor)
+				if rq.result then
+					local n = level.ray_query_normal(top, DOWN, 60)
+					local p = vector():set(top.x, top.y - rq.range, top.z)
+					local to = vector():sub(p, cam)
+					local dist = to:magnitude()
+					local los = level.ray_query(cam, to:normalize(), dist + 1, rq_target.rqtStatic, db.actor)
+					if n.y > 0.95 and los.result and math.abs(los.range - dist) < 0.4 and p:distance_to(B.pos) > 3 and open_around(p, 1.8) then
+						table.insert(st.grounds, p)
+					end
+				end
+			end
+		end
+		portal_mod.trace(string.format("WALKTEST 3: %d flat ground spots in sight", #st.grounds))
+		st.g = 0
+		go("floor_aim")
+	elseif st.stage == "floor_aim" then
+		st.g = st.g + 1
+		local g = st.grounds[st.g]
+		if not g or st.g > 12 then
+			return report("FAIL no portal on the ground")
+		end
+		face(vector():sub(g, device().cam_pos):normalize(), 600)
+		go("floor_shot", 900)
+	elseif st.stage == "floor_shot" then
+		local g = st.grounds[st.g]
+		local cam = device().cam_pos
+		if not pm_portals.shoot(1, cam, vector():sub(g, cam):normalize()) then
+			return go("floor_aim", 500)
+		end
+		portal_mod.news("A portal on the ground: jump in")
+		go("drop", 1500)
+	elseif st.stage == "drop" then
+		local B = pm_portals.portals[1]
+		st.travels0 = pm_portals.travels
+		a:set_actor_position(vector():set(B.pos.x, B.pos.y + 3, B.pos.z), false)
+		level.set_actor_velocity(vector():set(0, 0, 0)) -- a straight drop: no sideways speed left from walking
+		turn(actor_camera(0).yaw, 1.5, 300) -- look straight down into it
+		st.drop_t = time_global()
+		go("falling")
+	elseif st.stage == "falling" then
+		if time_global() >= (st.next_diag or 0) then
+			st.next_diag = time_global() + 250
+			local B = pm_portals.portals[1]
+			local d = vector():sub(a:position(), B.pos)
+			portal_mod.trace(string.format("WALKTEST falling: feet h %.2f above the floor portal, x %.2f, y %.2f, v (%.1f, %.1f, %.1f)", d:dotproduct(B.n),
+				d:dotproduct(B.right), d:dotproduct(B.up), level.actor_velocity().x, level.actor_velocity().y, level.actor_velocity().z))
+		end
+		if pm_portals.travels > st.travels0 then
+			local v = level.actor_velocity()
+			portal_mod.trace(string.format("WALKTEST 3: fell through the floor portal, out at %.1f m/s, view (%.2f, %.2f, %.2f)", v:magnitude(),
+				device().cam_dir.x, device().cam_dir.y, device().cam_dir.z))
+			st.fell = true
+			go("wall_floor", 3500)
+		elseif time_global() - st.drop_t > 5000 then
+			return report("FAIL dropped onto the floor portal but did not go through")
+		end
+
+	-- 4: into the orange wall portal, up out of the floor portal
+	elseif st.stage == "wall_floor" then
+		local O = pm_portals.portals[2]
+		local start = vector():set(O.pos):add(vector():set(O.n):mul(3))
+		start.y = ground_at(start)
+		a:set_actor_position(start, false)
+		face(vector():set(O.n):invert(), 1)
+		portal_mod.news("Into the wall, out of the floor")
+		st.travels0 = pm_portals.travels
+		go("walk4", 1000)
+	elseif st.stage == "walk4" then
+		st.diag = 2
+		walk(true)
+		st.until_t = time_global() + 4000
+		go("walking4")
+	elseif st.stage == "walking4" then
+		if time_global() >= (st.next_diag or 0) then
+			st.next_diag = time_global() + 300
+			local O = pm_portals.portals[2]
+			local d = vector():sub(a:position(), O.pos)
+			portal_mod.trace(string.format("WALKTEST 4: eye z %.2f, feet z %.2f, x %.2f, y %.2f, speed %.1f", eye_z(2), feet_z(2),
+				d:dotproduct(O.right), d:dotproduct(O.up), level.actor_velocity():magnitude()))
+		end
+		if pm_portals.travels > st.travels0 then
+			walk(false)
+			portal_mod.trace(string.format("WALKTEST 4: out of the floor portal, view (%.2f, %.2f, %.2f)",
+				device().cam_dir.x, device().cam_dir.y, device().cam_dir.z))
+			go("end", 4000)
+		elseif time_global() > st.until_t then
+			walk(false)
+			return report("FAIL walked at the orange portal but did not get through")
+		end
+	elseif st.stage == "end" then
+		report(string.format("%s | stood half inside the portal: %s, fell through looking down: %s",
+			st.half_ok and st.fell and "PASS" or "PARTIAL", tostring(st.half_ok), tostring(st.fell)))
+	end
+end
