@@ -66,8 +66,9 @@ end
 
 local SCENARIOS = { boots = "pm_test", gallery = "pm_gallery", portals = "pm_portal_test", gun = "pm_gun_test", bar = "pm_bar_test", npc = "pm_npc_test", walk = "pm_walk_test", mods = "pm_mods_test" }
 
--- The mod's kit (long fall boots + portal gun) goes into the inventory once per game: the first time a save is played
--- with the mod. A flag in the actor's pstor (saved by bind_stalker) remembers it. Not in lab scenarios.
+-- The mod's kit (long fall boots + portal gun) goes into the inventory once per game: each item the first time a save
+-- is played with its mod switched on in My Mods (switched off, it is not handed out; switched on later, it comes
+-- then). Flags in the actor's pstor (saved by bind_stalker) remember it. Not in lab scenarios.
 local kit_checked = false
 local function issue_kit()
 	if kit_checked or not db.actor or not db.storage[db.actor:id()] then
@@ -75,17 +76,28 @@ local function issue_kit()
 	end
 	kit_checked = true
 	if setting("autotest") or xr_logic.pstor_retrieve(db.actor, "portal_mod_kit", false) then
-		return
+		return -- "portal_mod_kit": the whole kit, from saves made before the per-item flags
 	end
-	xr_logic.pstor_store(db.actor, "portal_mod_kit", true)
-	if not db.actor:object(pm_boots.SECTION) then
-		give(pm_boots.SECTION)
+	local issued = {}
+	for _, it in ipairs({ { "long_fall_boots", pm_boots.SECTION }, { "portal_gun", pm_portals.GUN } }) do
+		local key = "portal_mod_kit_" .. it[1]
+		if not xr_logic.pstor_retrieve(db.actor, key, false) and (not mod_manager or mod_manager.enabled(it[1])) then
+			xr_logic.pstor_store(db.actor, key, true)
+			if not db.actor:object(it[2]) then
+				give(it[2])
+			end
+			issued[#issued + 1] = it[1]
+		end
 	end
-	if not db.actor:object(pm_portals.GUN) then
-		give(pm_portals.GUN)
+	if #issued > 0 then
+		news("Aperture Science kit: Long Fall Boots (put them on your belt) and the Portal Gun (LMB blue, RMB orange, R closes). F9 / F8 give them again.")
+		trace("kit issued: " .. table.concat(issued, ", "))
 	end
-	news("Aperture Science kit: Long Fall Boots (put them on your belt) and the Portal Gun (LMB blue, RMB orange, R closes). F9 / F8 give them again.")
-	trace("kit issued")
+end
+
+-- My Mods switched something on: hand out what is now due
+function kit_recheck()
+	kit_checked = false
 end
 
 function on_update(delta)

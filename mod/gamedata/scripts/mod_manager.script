@@ -80,6 +80,9 @@ function apply()
 		pm_portals.remove(1)
 		pm_portals.remove(2)
 	end
+	if portal_mod and portal_mod.kit_recheck then
+		portal_mod.kit_recheck()
+	end
 end
 
 ------------------------------------------------------------------------------------------------------------------------
