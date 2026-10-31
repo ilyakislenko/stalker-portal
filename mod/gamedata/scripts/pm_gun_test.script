@@ -272,14 +272,27 @@ function update()
 		go("falling")
 	elseif st.stage == "falling" then
 		if pm_portals.travels > st.travels0 then
-			go("out", 200) -- (engine E17 sets the exit velocity in the next physics step: read a moment later)
+			st.series, st.series_end = {}, time_global() + 400
+			go("series") -- (engine E17 sets the exit velocity in the next physics step: watched frame by frame)
 		elseif time_global() - st.drop_time > 5000 then
 			return report("FAIL fell but did not go through the floor portal")
 		end
-	elseif st.stage == "out" then
+	elseif st.stage == "series" then
 		local v = level.actor_velocity()
-		portal_mod.trace(string.format("GUNTEST fell through the floor portal, out at %.1f m/s (%.1f, %.1f, %.1f)", v:magnitude(), v.x, v.y, v.z))
-		st.out_speed = v:magnitude()
+		local p = a:position()
+		table.insert(st.series, string.format("%.1f@(%.1f,%.1f,%.1f)", v:magnitude(), p.x, p.y, p.z))
+		-- the momentum out: the fastest it really moved (metres per frame), not the controller's word for it
+		if st.prev_p then
+			local dt = math.max(time_global() - st.prev_t, 1) / 1000
+			st.out_speed = math.max(st.out_speed or 0, vector():sub(p, st.prev_p):magnitude() / dt)
+		end
+		st.prev_p, st.prev_t = vector():set(p), time_global()
+		if time_global() >= st.series_end then
+			portal_mod.trace("GUNTEST exit speed by frame: " .. table.concat(st.series, " "))
+			go("out")
+		end
+	elseif st.stage == "out" then
+		portal_mod.trace(string.format("GUNTEST fell through the floor portal, out at up to %.1f m/s (moved)", st.out_speed or 0))
 		go("report", 2800)
 	elseif st.stage == "report" then
 		pm_portals.close_all() -- R: Portal 2's fizzle animation, both portals close
