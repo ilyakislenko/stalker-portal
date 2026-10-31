@@ -272,7 +272,7 @@ function update()
 		go("falling")
 	elseif st.stage == "falling" then
 		if pm_portals.travels > st.travels0 then
-			st.series, st.series_end = {}, time_global() + 400
+			st.series, st.series_end = {}, time_global() + 1200
 			go("series") -- (engine E17 sets the exit velocity in the next physics step: watched frame by frame)
 		elseif time_global() - st.drop_time > 5000 then
 			return report("FAIL fell but did not go through the floor portal")
