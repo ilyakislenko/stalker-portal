@@ -1,0 +1,54 @@
+-- Lab scenario "stutter": frame times while the player runs (user 2026-10-31: "the game hitches every third or half a
+-- second while running or walking"). 10 s of the forward key on open ground; every frame's length logged as a spike over
+-- 40 ms, then mean, max and the spikes' spacing. Logs "STUTTER" lines.
+
+local st = nil
+
+local function report(verdict)
+	portal_mod.trace("AUTOTEST RESULT " .. verdict)
+	st.stage = "done"
+	portal_mod.finish_autotest()
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	local now = time_global()
+	if not st then
+		st = { stage = "move", t = now + 4000 }
+		portal_mod.trace("AUTOTEST armed (stutter) ai_bot=" .. tostring(not mod_manager or mod_manager.enabled("ai_bot")))
+		return
+	end
+	if st.stage == "move" and now >= st.t then
+		pm_bar_test.clear_monsters()
+		get_console():execute("g_god on")
+		local g = level.name() == "l01_escape" and vector():set(-200.0, -20.0, -142.0) or pm_test.open_ground()
+		a:set_actor_position(g, false)
+		st.stage, st.t = "run", now + 1500
+	elseif st.stage == "run" and now >= st.t then
+		st.dik = bind_to_dik(key_bindings.kFWD)
+		level.send_event_key_press(st.dik)
+		st.stage, st.t0, st.prev, st.frames, st.spikes = "running", now, now, {}, {}
+	elseif st.stage == "running" then
+		level.send_event_key_hold(st.dik)
+		local dt = now - st.prev
+		st.prev = now
+		table.insert(st.frames, dt)
+		if dt > 20 then
+			table.insert(st.spikes, string.format("%d@%.2f", dt, (now - st.t0) / 1000))
+		end
+		if now - st.t0 >= 10000 then
+			level.send_event_key_release(st.dik)
+			local sum, mx = 0, 0
+			for _, v in ipairs(st.frames) do
+				sum = sum + v
+				mx = math.max(mx, v)
+			end
+			portal_mod.trace(string.format("STUTTER %d frames, mean %.1f ms, max %d ms, %d spikes > 20 ms: %s", #st.frames,
+				sum / #st.frames, mx, #st.spikes, table.concat(st.spikes, " ")))
+			report("DONE")
+		end
+	end
+end
