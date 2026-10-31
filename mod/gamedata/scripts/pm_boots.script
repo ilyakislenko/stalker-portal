@@ -12,6 +12,7 @@ local LAND_WINDOW_MS = 600
 last_land_time = -100000
 last_land_speed = 0
 cancelled_hits = 0
+local land_snd = {} -- the landing sounds, made once
 
 function has_boots_on_belt(actor)
 	local state = { found = false }
@@ -51,5 +52,9 @@ function on_before_hit(h)
 	end
 	h.ignore_hit = true
 	cancelled_hits = cancelled_hits + 1
+	-- Portal 2's long fall boots landing (player/footsteps/longfall_land_0N): the fall that would have hurt
+	local k = math.random(1, 3)
+	land_snd[k] = land_snd[k] or sound_object("portal_mod\\longfall_land_0" .. k)
+	land_snd[k]:play(actor, 0, sound_object.s2d)
 	portal_mod.trace(string.format("long fall boots: landing hit %.3f cancelled (contact speed %.1f)", h.power, last_land_speed))
 end

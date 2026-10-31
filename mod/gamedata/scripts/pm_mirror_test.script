@@ -232,6 +232,17 @@ function update()
 		local dik = bind_to_dik(key_bindings.kJUMP)
 		level.send_event_key_press(dik)
 		level.send_event_key_release(dik)
+		go("drop", 4000)
+	elseif st.stage == "drop" then
+		-- the gun's world model on the ground: one more spawned 2 m in front (open ground between the player and the
+		-- fence), looked at from above
+		local B = pm_portals.portals[1]
+		local q = vector():set(device().cam_pos):sub(vector():set(B.n.x, 0, B.n.z):normalize():mul(-2.0))
+		local fwd = vector():set(B.n.x, 0, B.n.z):normalize():invert()
+		q = vector():set(a:position()):add(vector():set(fwd):mul(2.0))
+		q.y = ground_at(q) + 0.3
+		alife():create(pm_portals.GUN, q, level.vertex_id(q), a:game_vertex_id())
+		face(vector():sub(q, device().cam_pos):normalize(), 700)
 		go("end", 4000)
 	elseif st.stage == "end" then
 		report("DONE (judge by eye: the player's back in the blue portal)")

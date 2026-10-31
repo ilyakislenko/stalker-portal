@@ -58,6 +58,14 @@ inv_grid_width          = 3
 inv_grid_height         = 2
 
 portal_mod_brief        = --          ; engine portal-mod E3: HUD shows the gun's name and this instead of an ammo count
+;--- the world model (tools/p2_world.py: Portal 2's w_portalgun; meshes\portal_mod\wpn_portalgun.ogf, not shipped): the
+; gun on the ground, in an NPC's hands and in the player's seen through a portal (engine E18). One bone, wpn_body;
+; the muzzle along +z, the model's origin at its back - the hand holds it at the grip
+visual                  = portal_mod\wpn_portalgun.ogf
+position                = 0.0, -0.05, -0.18
+orientation             = 0, 0, 0
+fire_point              = 0.0, 0.0, 0.58
+shell_point             = 0.0, 0.0, 0.3
 ammo_class              = ammo_portalgun
 ammo_limit              = 0
 ammo_current            = 0

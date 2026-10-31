@@ -272,13 +272,15 @@ function update()
 		go("falling")
 	elseif st.stage == "falling" then
 		if pm_portals.travels > st.travels0 then
-			local v = level.actor_velocity()
-			portal_mod.trace(string.format("GUNTEST fell through the floor portal, out at %.1f m/s (%.1f, %.1f, %.1f)", v:magnitude(), v.x, v.y, v.z))
-			st.out_speed = v:magnitude()
-			go("report", 3000)
+			go("out", 200) -- (engine E17 sets the exit velocity in the next physics step: read a moment later)
 		elseif time_global() - st.drop_time > 5000 then
 			return report("FAIL fell but did not go through the floor portal")
 		end
+	elseif st.stage == "out" then
+		local v = level.actor_velocity()
+		portal_mod.trace(string.format("GUNTEST fell through the floor portal, out at %.1f m/s (%.1f, %.1f, %.1f)", v:magnitude(), v.x, v.y, v.z))
+		st.out_speed = v:magnitude()
+		go("report", 2800)
 	elseif st.stage == "report" then
 		pm_portals.close_all() -- R: Portal 2's fizzle animation, both portals close
 		st.verdict = st.out_speed and st.out_speed > 5 and "PASS" or "FAIL no momentum out of the portal"

@@ -33,6 +33,25 @@ TEXTURES = {  # Portal 2 png -> textures\portal_mod\<name>.dds
     "v_portalgun_blue": "v_portalgun_blue",  # skins: lights blue / orange (alpha = self-illumination mask)
     "v_portalgun_orange": "v_portalgun_orange",
 }
+# beyond the converter's list (its SOUNDS): read from Portal 2's VPKs here - the open portal's hum and the long fall
+# boots' landing
+EXTRA_SOUNDS = ["weapon_ambient/wpn_portal_ambient_lp_01", "player/footsteps/longfall_land_01",
+                "player/footsteps/longfall_land_02", "player/footsteps/longfall_land_03"]
+
+
+def extra_sounds():
+    sys.path.insert(0, str(CONVERTER.parent))
+    from vpk import SourceFS
+    p2 = Path(PORTAL2)
+    fs = SourceFS([str(p2 / d / "pak01_dir.vpk") for d in ("portal2_dlc2", "portal2_dlc1", "portal2")] + [str(p2 / "portal2")])
+    for snd in EXTRA_SOUNDS:
+        data = fs.read("sound/" + snd + ".wav")
+        if data is None:
+            print("sound not found:", snd)
+            continue
+        (P2 / "sounds" / (Path(snd).name + ".wav")).write_bytes(data)
+
+
 OPAQUE = {"v_portalgun"}  # alpha means something else in Portal 2; X-Ray model shaders read it as gloss
 
 
@@ -50,6 +69,7 @@ def main():
         print("texture", dst, im.size)
     snd_dir = GEN / "sounds" / "portal_mod"
     snd_dir.mkdir(parents=True, exist_ok=True)
+    extra_sounds()
     for wav in sorted((P2 / "sounds").glob("*.wav")):
         out = snd_dir / (wav.stem + ".ogg")
         subprocess.run([str(FFMPEG), "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav), "-ac", "1", "-ar", "44100",

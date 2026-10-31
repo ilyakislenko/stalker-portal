@@ -48,7 +48,22 @@ function place(i, pos, n, up, w, h)
 	}
 end
 
+-- the open portal's hum (Portal 2's wpn_portal_ambient_lp_01), a loop at each portal
+local hum = {}
+local function hum_start(i, pos)
+	if not db.actor then
+		return
+	end
+	hum[i] = hum[i] or sound_object("portal_mod\\wpn_portal_ambient_lp_01")
+	hum[i]:stop()
+	hum[i]:play_at_pos(db.actor, pos, 0, sound_object.s3d + sound_object.looped)
+	hum[i].volume = 0.6
+end
+
 function remove(i)
+	if hum[i] then
+		hum[i]:stop()
+	end
 	portals[i] = nil
 	if engine_ok() then
 		level.portal_clear(i - 1)
@@ -272,6 +287,7 @@ function shoot(i, from, dir)
 	end
 	place(i, c, n, up)
 	play3d(i == 1 and "portal_open_blue_01" or ("portal_open_red_0" .. math.random(1, 2)), c)
+	hum_start(i, c)
 	portal_mod.trace(string.format("portal %d at (%.2f, %.2f, %.2f) n=(%.2f, %.2f, %.2f)", i, c.x, c.y, c.z, n.x, n.y, n.z))
 	return true
 end
@@ -280,6 +296,11 @@ function close_all()
 	gun_motion("anim_reload") -- Portal 2's fizzle
 	if portals[1] or portals[2] then
 		play2d("portal_fizzle_0" .. math.random(1, 2))
+	end
+	for i = 1, 2 do
+		if portals[i] then
+			play3d("portal_close" .. math.random(1, 2), portals[i].pos)
+		end
 	end
 	remove(1)
 	remove(2)
@@ -453,10 +474,31 @@ local function travel(ia, A, B, eye, x, y, vel)
 	end
 
 	play2d("portal_enter_0" .. math.random(1, 3))
+	play2d("portal_exit_0" .. math.random(1, 2))
 	cooldown_until = time_global() + 100
 	travels = travels + 1
 	portal_mod.trace(string.format("travel %d->%d (%s->%s): in %.1f m/s, out (%.1f, %.1f, %.1f), roll %.0f deg, feet %.2f m out (asked %.2f)",
 		ia, 3 - ia, kind(A), kb, vel:magnitude(), v_out.x, v_out.y, v_out.z, math.deg(roll0), now, placed))
+end
+
+-- the gun's own sounds (Portal 2): picked up - it powers up, drawn - its activation, put away - it powers down.
+-- The first look after a load only notes how things are
+local gun_had, gun_held
+function gun_sounds()
+	local a = db.actor
+	local has = a:object(GUN) ~= nil
+	local item = a:active_item()
+	local held = item ~= nil and item:section() == GUN
+	if gun_had ~= nil then
+		if has and not gun_had then
+			play2d("portalgun_powerup1")
+		elseif held and not gun_held then
+			play2d("wpn_portalgun_activation_01")
+		elseif gun_held and not held and has then
+			play2d("portalgun_powerdown")
+		end
+	end
+	gun_had, gun_held = has, held
 end
 
 -- the eye crossed a portal's plane (front to back) inside its hole since the last frame?
@@ -510,5 +552,6 @@ function update(delta)
 		play_pending_motion()
 		update_roll()
 		travel_check()
+		gun_sounds()
 	end
 end
