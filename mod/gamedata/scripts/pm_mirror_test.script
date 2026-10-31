@@ -1,0 +1,239 @@
+-- Lab scenario "mirror": the player sees themselves through a portal (portal-mod engine E18: the first-person view
+-- hides the actor's model, the portal pass shows it). Blue and orange on two facing walls of the Cordon yard; the player
+-- stands between them facing blue, back to orange - through blue they see their own back; then a turn to the side
+-- and a jump. Recorded on Cordon (save "all"). Logs "MIRRORTEST" lines; the verdict is by eye on the take.
+
+local st = nil
+local DOWN = vector():set(0, -1, 0)
+
+local function go(stage, wait_ms)
+	st.stage = stage
+	st.t = time_global() + (wait_ms or 0)
+end
+
+local function ground_at(p)
+	local top = vector():set(p.x, p.y + 30, p.z)
+	local rq = level.ray_query(top, DOWN, 80, rq_target.rqtStatic, db.actor)
+	return rq.result and (top.y - rq.range) or p.y
+end
+
+local function report(verdict)
+	portal_mod.trace("AUTOTEST RESULT " .. verdict)
+	go("done")
+	portal_mod.finish_autotest()
+end
+
+-- nothing sticking out of the wall where a person walks into a portal: rays at 0.3..1.9 m above the ground, 0.4 m
+-- to either side, all hit the wall's plane
+local function flat_wall(hit, n, ground)
+	local back = vector():set(n):invert()
+	local side = vector():crossproduct(vector():set(0, 1, 0), n):normalize()
+	for _, hgt in ipairs({ 0.3, 1.0, 1.6, 1.9, 2.2 }) do
+		for _, sx in ipairs({ -0.55, 0, 0.55 }) do
+			local from = vector():set(hit):add(vector():set(n):mul(1.0)):add(vector():set(side):mul(sx))
+			from.y = ground + hgt
+			local rq = level.ray_query(from, back, 2.0, rq_target.rqtBoth, db.actor)
+			if not rq.result or math.abs(rq.range - 1.0) > 0.08 then
+				return false
+			end
+			-- and nothing overhead in front of it up to 2.4 m
+			local up = level.ray_query(from, vector():set(0, 1, 0), 2.4 - hgt, rq_target.rqtStatic, db.actor)
+			if up.result then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+-- walls at eye height with flat ground in front, 4..25 m away
+local function find_walls()
+	local eye = device().cam_pos
+	local walls = {}
+	for k = 0, 23 do
+		local a = k * math.pi / 12
+		local dir = vector():set(math.sin(a), 0, math.cos(a))
+		local rq = level.ray_query(eye, dir, 30, rq_target.rqtStatic, db.actor)
+		if rq.result and rq.range > 4 and rq.range < 25 then
+			local n = level.ray_query_normal(eye, dir, 30)
+			if math.abs(n.y) < 0.3 and n:dotproduct(dir) < -0.7 then
+				local hit = vector():set(eye):add(vector():set(dir):mul(rq.range))
+				local g_near = ground_at(vector():set(hit):add(vector():set(n):mul(0.7)))
+				local g_far = ground_at(vector():set(hit):add(vector():set(n):mul(3)))
+				local h = hit.y - g_near
+				if math.abs(g_near - g_far) < 0.4 and h > 0.8 and h < 2.5 and flat_wall(hit, n, g_near) then
+					table.insert(walls, { dir = dir, dist = rq.range, n = n })
+				end
+			end
+		end
+	end
+	return walls
+end
+
+-- nothing (walls, fences) within r metres around a ground point, at knee and head height
+function open_around(p, r)
+	for _, hgt in ipairs({ 0.5, 1.6 }) do
+		local from = vector():set(p.x, p.y + hgt, p.z)
+		for k = 0, 7 do
+			local a = k * math.pi / 4
+			local rq = level.ray_query(from, vector():set(math.sin(a), 0, math.cos(a)), r, rq_target.rqtBoth, db.actor)
+			if rq.result then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+-- smooth camera turns: yaw/pitch from the current view to a target over ms
+local function turn(yaw, pitch, ms)
+	local cam = actor_camera(0)
+	st.anim = { y0 = cam.yaw, p0 = cam.pitch, y1 = yaw, p1 = pitch or cam.pitch, t0 = time_global(), ms = ms }
+	-- shortest way round
+	while st.anim.y1 - st.anim.y0 > math.pi do
+		st.anim.y1 = st.anim.y1 - 2 * math.pi
+	end
+	while st.anim.y1 - st.anim.y0 < -math.pi do
+		st.anim.y1 = st.anim.y1 + 2 * math.pi
+	end
+end
+
+local function animate()
+	local an = st.anim
+	if not an then
+		return
+	end
+	local k = math.min(1, (time_global() - an.t0) / an.ms)
+	k = k * k * (3 - 2 * k)
+	local cam = actor_camera(0)
+	cam.yaw = an.y0 + (an.y1 - an.y0) * k
+	cam.pitch = an.p0 + (an.p1 - an.p0) * k
+	if k >= 1 then
+		-- keep the yaw in (-pi, pi]: from -2*pi the body turns a full circle to it and walks sideways meanwhile
+		local y = cam.yaw
+		while y > math.pi do
+			y = y - 2 * math.pi
+		end
+		while y <= -math.pi do
+			y = y + 2 * math.pi
+		end
+		cam.yaw = y
+		st.anim = nil
+	end
+end
+
+local function yaw_of(dir)
+	return -dir:getH()
+end
+
+local function face(dir, ms)
+	turn(yaw_of(dir), -dir:getP(), ms or 1)
+end
+
+-- forward key held (real input) while `walking`
+local function walk(on)
+	if on and not st.walk_dik then
+		st.walk_dik = bind_to_dik(key_bindings.kFWD)
+		level.send_event_key_press(st.walk_dik)
+	elseif not on and st.walk_dik then
+		level.send_event_key_release(st.walk_dik)
+		st.walk_dik = nil
+	end
+end
+
+-- the eye's distance in front of portal i's plane (negative: behind it)
+local function eye_z(i)
+	local P = pm_portals.portals[i]
+	return vector():sub(device().cam_pos, P.pos):dotproduct(P.n)
+end
+
+local function feet_z(i)
+	local P = pm_portals.portals[i]
+	return vector():sub(db.actor:position(), P.pos):dotproduct(P.n)
+end
+
+function update()
+	local a = db.actor
+	if not a then
+		return
+	end
+	if not st then
+		st = {}
+		go("move", 4000)
+		portal_mod.trace("AUTOTEST armed (mirror) engine=" .. tostring(pm_portals.engine_ok()))
+		return
+	end
+	animate()
+	if time_global() < st.t then
+		return
+	end
+	if st.stage == "move" then
+		if not pm_portals.engine_ok() then
+			return report("ERROR stock engine (use bin_portal)")
+		end
+		pm_bar_test.clear_monsters()
+		get_console():execute("g_god on") -- lab only
+		local g = level.name() == "l01_escape" and vector():set(-221.5, -18.5, -140.0) or pm_test.open_ground()
+		if g then
+			g.y = ground_at(g)
+			a:set_actor_position(g, false)
+		end
+		portal_mod.give(pm_portals.GUN)
+		go("arm", 1200)
+	elseif st.stage == "arm" then
+		local gun = a:object(pm_portals.GUN)
+		if not gun then
+			return report("ERROR the gun never appeared in the inventory")
+		end
+		a:move_to_slot(gun, false)
+		a:activate_slot(2)
+		go("scan", 1500)
+	elseif st.stage == "scan" then
+		-- the nearest flat wall: blue and orange side by side on it, 1.8 m either side of the spot looked at, standing
+		-- on the ground (placed, not shot: the yard's walls have windows and edges a shot gives up on)
+		local walls = find_walls()
+		table.sort(walls, function(x, y) return x.dist < y.dist end)
+		local w = walls[1]
+		portal_mod.trace(string.format("MIRRORTEST %d walls", #walls))
+		if not w then
+			return report("ERROR no portal-able wall")
+		end
+		local eye = device().cam_pos
+		local hit = vector():set(eye):add(vector():set(w.dir):mul(w.dist))
+		local up = vector():set(0, 1, 0)
+		local g = ground_at(vector():set(hit):add(vector():set(w.n):mul(0.4)))
+		-- Portal 2's way: blue on the wall, orange 8 m out facing it (placed free-standing: no second wall faces this
+		-- one), the player between them looks into blue and sees the room behind them - their own back
+		local b = vector():set(hit):add(vector():set(w.n):mul(0.01))
+		b.y = g + pm_portals.H / 2 + 0.03
+		pm_portals.place(1, b, w.n, up)
+		local o = vector():set(hit):add(vector():set(w.n):mul(8.0))
+		o.y = ground_at(o) + pm_portals.H / 2 + 0.03
+		pm_portals.place(2, o, vector():set(w.n):invert(), up)
+		st.mid = vector():set(hit):add(vector():set(w.n):mul(4.5))
+		go("look", 1000)
+	elseif st.stage == "look" then
+		-- in front of orange, facing blue: through blue, the room in front of orange - the player themselves
+		local B = pm_portals.portals[1]
+		local spot = vector():set(st.mid)
+		spot.y = ground_at(spot)
+		a:set_actor_position(spot, false)
+		face(vector():sub(B.pos, vector():set(spot.x, spot.y + 1.6, spot.z)):normalize(), 800)
+		portal_mod.news("Into the blue portal: who is that?")
+		go("side", 6000)
+	elseif st.stage == "side" then
+		local B = pm_portals.portals[1]
+		local d = vector():sub(B.pos, device().cam_pos):normalize()
+		face(vector():set(d.x * 0.9 + d.z * 0.45, d.y, d.z * 0.9 - d.x * 0.45):normalize(), 1500)
+		go("jump", 3000)
+	elseif st.stage == "jump" then
+		local B = pm_portals.portals[1]
+		face(vector():sub(B.pos, device().cam_pos):normalize(), 600)
+		local dik = bind_to_dik(key_bindings.kJUMP)
+		level.send_event_key_press(dik)
+		level.send_event_key_release(dik)
+		go("end", 4000)
+	elseif st.stage == "end" then
+		report("DONE (judge by eye: the player's back in the blue portal)")
+	end
+end
