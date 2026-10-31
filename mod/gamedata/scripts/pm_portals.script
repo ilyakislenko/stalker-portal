@@ -5,7 +5,7 @@
 GUN = "wpn_portalgun"
 W, H = 1.2, 2.0           -- portal size in metres (Portal 2: 64 x 112 units, about 1.2 x 2.1 m)
 local OPEN_MS = 350       -- opening animation
-local RANGE = 1000        -- how far the gun reaches (Portal 2: its trace is ~1 km; 150 m left the ChNPP's stacks out of reach)
+local RANGE = 100000      -- how far the gun reaches: anything in sight on the level (Portal 2's gun reaches the Moon; 150 m left the ChNPP's stacks out of reach)
 local DOWN = vector():set(0, -1, 0)
 
 -- portals[1] = blue (engine slot 0), portals[2] = orange (slot 1): {pos, n, up, right, w, h, born}
