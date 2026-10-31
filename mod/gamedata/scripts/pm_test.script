@@ -164,7 +164,7 @@ function update()
 		portal_mod.news(string.format("%s: %d%% health damage (impact at %.0f m/s)",
 			st.which == "no_boots" and "Without boots" or "With boots", math.max(0, math.floor(dmg * 100 + 0.5)), pm_boots.last_land_speed))
 		top_up_health()
-		go(st.which == "no_boots" and "give" or "report", 3000)
+		go(st.which == "no_boots" and "give" or "slam_boots", 3000)
 	elseif st.stage == "give" then
 		if not a:object(pm_boots.SECTION) then
 			portal_mod.give(pm_boots.SECTION)
@@ -188,20 +188,62 @@ function update()
 			results.boots = { error = "boots not on belt" }
 			go("report")
 		end
+	-- Test 3: a wall at 30 m/s, with the boots on and then without (user 2026-10-31: no collision may hurt with them)
+	elseif st.stage == "slam_boots" or st.stage == "slam_no" then
+		local which = st.stage == "slam_boots" and "slam_boots" or "slam_no"
+		if which == "slam_no" then
+			local bo = a:object(pm_boots.SECTION)
+			if bo and a:is_on_belt(bo) then
+				a:move_to_ruck(bo)
+			end
+		end
+		top_up_health()
+		local eye = device().cam_pos
+		local best, bd
+		for k = 0, 15 do
+			local dir = vector():set(math.sin(k * math.pi / 8), 0, math.cos(k * math.pi / 8))
+			local rq = level.ray_query(eye, dir, 25, rq_target.rqtStatic, a)
+			if rq.result and rq.range > 6 and (not bd or rq.range < bd) then
+				best, bd = dir, rq.range
+			end
+		end
+		if not best or not level.portal_fly_actor then
+			results[which] = { error = best and "no portal_fly_actor (stock engine)" or "no wall within 25 m" }
+			go(which == "slam_boots" and "slam_no" or "report", 500)
+		else
+			portal_mod.news(string.format("Test 3: into a wall %.0f m off at 30 m/s, %s", bd, which == "slam_boots" and "boots on" or "no boots"))
+			st.which, st.h0 = which, a.health
+			level.portal_fly_actor(vector():set(best):mul(30))
+			go("slammed", 2500)
+		end
+	elseif st.stage == "slammed" then
+		local dmg = st.h0 - a.health
+		results[st.which] = { damage = dmg }
+		portal_mod.trace(string.format("AUTOTEST %s: damage %.3f", st.which, dmg))
+		top_up_health()
+		go(st.which == "slam_boots" and "slam_no" or "report", 2000)
 	elseif st.stage == "report" then
 		local nb, wb = results.no_boots or {}, results.boots or {}
+		local sb, sn = results.slam_boots or {}, results.slam_no or {}
 		local verdict
 		if nb.error or wb.error then
 			verdict = "ERROR " .. tostring(nb.error or wb.error)
 		elseif nb.damage < 0.02 then
 			verdict = "INCONCLUSIVE (no damage without boots: god mode or too low)"
-		elseif wb.damage < 0.002 then
-			verdict = "PASS"
-		else
+		elseif wb.damage >= 0.002 then
 			verdict = "FAIL (boots did not cancel the landing hit)"
+		elseif sb.error or sn.error then
+			verdict = "PASS falls, ERROR walls " .. tostring(sb.error or sn.error)
+		elseif (sb.damage or 1) >= 0.002 then
+			verdict = "FAIL (boots did not cancel the wall hit)"
+		elseif (sn.damage or 0) < 0.02 then
+			verdict = "PASS falls, INCONCLUSIVE walls (no damage without boots)"
+		else
+			verdict = "PASS"
 		end
-		portal_mod.trace(string.format("AUTOTEST RESULT %s | no_boots dmg=%s speed=%s | boots dmg=%s speed=%s | cancelled_hits=%d",
-			verdict, tostring(nb.damage), tostring(nb.speed), tostring(wb.damage), tostring(wb.speed), pm_boots.cancelled_hits))
+		portal_mod.trace(string.format("AUTOTEST RESULT %s | no_boots dmg=%s speed=%s | boots dmg=%s speed=%s | wall: boots dmg=%s, no boots dmg=%s | cancelled_hits=%d",
+			verdict, tostring(nb.damage), tostring(nb.speed), tostring(wb.damage), tostring(wb.speed), tostring(sb.damage),
+			tostring(sn.damage), pm_boots.cancelled_hits))
 		if verdict == "PASS" then
 			portal_mod.news("The long fall boots absorbed the impact completely")
 		end

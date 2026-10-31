@@ -1,9 +1,9 @@
--- Long Fall Boots (Portal 2): cancel landing damage while the boots are on the actor's belt.
+-- Long Fall Boots (Portal 2): no collision hurts while the boots are on the actor's belt - a landing, a wall or a tree
+-- flown into out of a portal, a thrown object (user 2026-10-31: "he can die flying into a tree").
 --
--- How the engine does falls (OGSR xrGame): CActor::g_Physics sends a GE_HIT of type strike whose
--- who_id and weapon_id are the actor itself; it is processed a frame later, after on_actor_land fired.
--- A thrown object or a poltergeist also gives strike hits, but those don't come right after a landing,
--- so they still hurt.
+-- How the engine does collision damage (OGSR xrGame, CActor::g_Physics): a GE_HIT of type strike sent by what was hit,
+-- weapon_id == who_id - the actor itself for the ground, walls and trees, the physics object for one (processed a
+-- frame later, after on_actor_land for a landing). A creature's blow (a stalker's butt, a mutant) still hurts.
 
 SECTION = "af_long_fall_boots"
 
@@ -40,21 +40,28 @@ function on_before_hit(h)
 	if not actor then
 		return
 	end
-	local id = actor:id()
-	if h.who_id ~= id or h.weapon_id ~= id then
-		return
+	if h.who_id ~= h.weapon_id then
+		return -- (something in someone's hands: no collision)
 	end
-	if time_global() - last_land_time > LAND_WINDOW_MS then
-		return
+	local id = actor:id()
+	if h.who_id ~= id then
+		local who = level.object_by_id(h.who_id)
+		if who and (IsStalker(who) or IsMonster(who)) then
+			return -- a creature's blow
+		end
 	end
 	if not has_boots_on_belt(actor) then
 		return
 	end
 	h.ignore_hit = true
 	cancelled_hits = cancelled_hits + 1
-	-- Portal 2's long fall boots landing (player/footsteps/longfall_land_0N): the fall that would have hurt
-	local k = math.random(1, 3)
-	land_snd[k] = land_snd[k] or sound_object("portal_mod\\longfall_land_0" .. k)
-	land_snd[k]:play(actor, 0, sound_object.s2d)
-	portal_mod.trace(string.format("long fall boots: landing hit %.3f cancelled (contact speed %.1f)", h.power, last_land_speed))
+	local landing = h.who_id == id and time_global() - last_land_time <= LAND_WINDOW_MS
+	if landing then
+		-- Portal 2's long fall boots landing (player/footsteps/longfall_land_0N): the fall that would have hurt
+		local k = math.random(1, 3)
+		land_snd[k] = land_snd[k] or sound_object("portal_mod\\longfall_land_0" .. k)
+		land_snd[k]:play(actor, 0, sound_object.s2d)
+	end
+	portal_mod.trace(string.format("long fall boots: %s hit %.3f cancelled (contact speed %.1f)",
+		landing and "landing" or (h.who_id == id and "collision" or "object"), h.power, last_land_speed))
 end
